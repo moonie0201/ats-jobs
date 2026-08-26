@@ -24,12 +24,17 @@ We run no analytics, set no cookies, and operate no website that collects anythi
 Two places, and we name them rather than claiming there are none:
 
 1. **Inside an ad body.** Employers — especially German- and Dutch-language SMEs — close a
-   posting with a named contact person. When `includeDescription` is on, that text is passed
-   through to the buyer. `redactContacts` defaults to **on** and removes email addresses and
-   phone numbers, but it does **not** remove names: a name in running prose is not
-   distinguishable by pattern. `descriptionRedacted` on each row records whether anything
-   was removed. `includeDescription` itself defaults to **off**, so a default run carries no
-   ad body at all.
+   posting with a named contact person. `includeDescription` defaults to **on**, so a default
+   run carries that text through to the buyer. `redactContacts` also defaults to **on** and
+   removes email addresses, phone numbers, LinkedIn/Xing/WhatsApp/Calendly/Telegram profile
+   links and handles, and a person's name **where the ad labels it as a contact**
+   (`Ansprechpartner:`, `Kontakt:`, `Contactpersoon:`, `Contact:`, `Hiring manager:`,
+   `Recruiter:`, `Questions? Contact`) — the label is kept so the buyer can see what was
+   taken. It does **not** remove a name written into running prose ("you will report to Anna
+   Schmidt"): there is no pattern there to match, and a recogniser loose enough to catch it
+   destroys the advertisement. We therefore do not claim the output is free of personal data.
+   `descriptionRedacted` on each row records whether anything was removed, and anyone named
+   in an ad body can have it removed unconditionally within 48 hours (see below).
 2. **A company name in the directory.** A sole trader trading under their own name is a
    natural person. A handful of directory rows are eponymous for that reason.
 

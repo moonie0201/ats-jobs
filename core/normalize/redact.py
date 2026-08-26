@@ -1,11 +1,17 @@
-"""Contact redaction (SPEC v2 §4.5.3, §15.5) — email addresses and phone numbers out.
+"""Contact redaction (SPEC v2 §4.5.3, §15.5) — emails, phones, contact channels and
+label-anchored contact names out.
 
 ``redactContacts`` defaults to **on** (§4.1) because German- and Dutch-language ads on
-Personio and Recruitee conventionally close with a named contact.
+Personio and Recruitee conventionally close with a named contact. It is the condition on
+which ``includeDescription`` was flipped to default **on**: a default run now carries the
+ad body, so the redactor has to reach further than a mailbox.
 
-**What this does not do:** it removes contact *channels*, not *identity*. A name in running
-prose has no pattern to match, so a named contact person survives with their address gone.
-`PRIVACY.md` says so in those words, and the Store listing must not claim otherwise.
+**What this does not do:** it is label-anchored, not a name recogniser. A person named in
+running prose — "you will report directly to Anna Schmidt" — has no pattern to match and
+survives. That is deliberate: guessing at names in free text mangles the ad body we sell.
+`PRIVACY.md` and the README say so in those words, and the Store listing must not claim
+otherwise. Role mailboxes (`jobs@`, `careers@`) are removed too — they are not personal
+data, but the email pattern cannot tell them apart and buyers have the apply URL anyway.
 
 Runs **before** salary parsing, so a redacted phone number cannot be read as a pay range
 (§4.5.3). That is an improvement on the phone-number rejection gate, not a replacement.
@@ -44,12 +50,14 @@ _EMAIL = re.compile(
 #: "Tel. 030 / 12 34 56 78", never "+49 30 …" — so the two international branches missed
 #: every number the §15.5 Art. 6(1)(f) balance test rests on this regex catching (V1 H1).
 #: The leading `0` plus the currency/comma lookbehind keeps it off salary and year ranges,
-#: and `_MIN_PHONE_DIGITS` suppresses the short false positives that remain.
+#: and `_MIN_PHONE_DIGITS` suppresses the short false positives that remain. The en/em
+#: dash is in the separator class because live Dutch Recruitee ads write "bel/app met
+#: onze recruiter … via 06–29140410" — an ASCII-only class shipped that number whole.
 _PHONE = re.compile(
     r"""
       (?<![\w.])\+\d[\d\s().\-/]{6,}\d                   # international: +49 30 1234567
     | (?<![\w.,])00\d[\d\s().\-/]{6,}\d                  # international: 0049 30 1234567
-    | (?<![\w.$€£₹¥,])0\d{1,4}[\s./\-]{1,3}\d[\d\s().\-/]{4,}\d(?![\d\w])  # 030 / 12 34 56 78
+    | (?<![\w.$€£₹¥,])0\d{1,4}[\s./\-–—]{1,3}\d[\d\s().\-/–—]{4,}\d(?![\d\w])  # 030 / 12 34 56 78
     | (?<![\w.$€£₹¥,])\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}(?![\d\w])   # NANP: (555) 123-4567
     """,
     re.X,
@@ -59,6 +67,71 @@ _PHONE = re.compile(
 #: pattern off "+1 more" and off long product codes.
 _MIN_PHONE_DIGITS = 7
 
+#: Contact channels that are neither an email nor a phone number (L3 P1 class 2). Each is
+#: an identifier *and* a route, so the reasoning that redacts a mailbox redacts these. The
+#: scheme is optional because ads write them bare. Only personal profile paths are listed:
+#: `linkedin.com/company/acme` is the employer, not a person, and must survive.
+_CHANNEL = re.compile(
+    r"""(?<![\w/])(?:https?://)?(?:[\w-]+\.)*
+        (?: linkedin\.com/(?:in|pub)
+          | xing\.com/(?:profile|xbp)
+          | calendly\.com
+          | wa\.me
+          | t\.me | telegram\.me
+        )
+        /[\w%.@~+-]+ (?:/[\w%.@~+-]*)*
+        (?:\?[\w%&=.,+-]*)?      # live: wa.me/49…?text=%23bewerbung — the tail goes too""",
+    re.X | re.I,
+)
+
+#: `@handle` only where a messaging/social label introduces it. Unanchored, `@name` would
+#: eat Cohere's live "coming from an @cohere.com … email alias" line, which the bare-domain
+#: test locks down as prose.
+_HANDLE = re.compile(
+    r"(?P<label>\b(?:LinkedIn|Xing|WhatsApp|Telegram|Calendly|Skype|Signal)\b[\s:]{0,3})"
+    r"(?P<name>@[\w.]{2,})",
+    re.I,
+)
+
+#: Label-anchored contact names (V1 L11, L3 P1 class 1) — the German/Dutch/English SME
+#: closing convention that the §15.5 Art. 6(1)(f) balance rests on. Deliberately narrow:
+#:
+#: * only where the ad *labels* the following token as a contact, so ordinary prose ("you
+#:   will report directly to Anna Schmidt") is untouched — a name recogniser loose enough
+#:   to catch that one shreds the ad body, which is the thing buyers pay for;
+#: * the label must end in a colon (never a hyphen: `Contact-Center Manager` is a job, not
+#:   a person), so `Contact Center Manager` never even opens a match;
+#: * two capitalised tokens minimum **and** a closing-punctuation lookahead, which is what
+#:   keeps it off German capitalised common nouns — in "Kontakt: Unser Recruiting Team
+#:   freut sich auf Sie" every candidate span is followed by another word, so nothing
+#:   matches at all.
+#:
+#: Only the `name` group is replaced: "Ihre Ansprechpartnerin: [redacted]" reads correctly
+#: and tells the buyer what was taken.
+_NAMED_CONTACT = re.compile(
+    r"""(?P<label>(?i:
+            (?: Ansprechpartner(?:in)?
+              | Kontaktperson | Kontakt
+              | Contactpersoon | Contactperson | Contact
+              | Hiring\ manager | Recruiter | Recruiting\ contact
+              | Your\ (?:contact|recruiter)
+            )\s*:
+          | Questions\?\s*(?:Contact|Reach\ out\ to)
+          | Bei\ Fragen\ (?:wenden\ Sie\ sich\ an|steht\ Ihnen)
+          | Neem\ contact\ op\ met
+        ))
+        (?P<sep>(?:\s|&nbsp;|<[^>]{1,40}>)*)
+        (?P<name>
+            (?:(?:Herr|Frau|Dhr\.|Mevr\.|Mr\.|Ms\.|Mrs\.|Dr\.)\s+)?
+            [A-ZÀ-ÖØ-Þ][\w'’-]+
+            # Dutch/German/French tussenvoegsel: "Anke de Vries", "Peter van der Berg"
+            (?:\s+(?:(?:de|den|der|van|von|di|du|le|la|del|da|dos)\s+){0,2}
+                [A-ZÀ-ÖØ-Þ][\w'’-]+){1,2}
+        )
+        (?=[ \t ]*(?:[,.;:!?)\]<\r\n]|$))""",
+    re.X,
+)
+
 
 def _phone_sub(match: re.Match[str]) -> str:
     text = match.group(0)
@@ -67,16 +140,28 @@ def _phone_sub(match: re.Match[str]) -> str:
     return PLACEHOLDER
 
 
+def _keep_label(match: re.Match[str]) -> str:
+    """Replace only the ``name`` group, leaving the label that introduced it in place."""
+    return match.group(0)[: match.start("name") - match.start(0)] + PLACEHOLDER
+
+
 def redact_text(value: str | None) -> tuple[str | None, bool]:
-    """``(text, something_was_removed)``. Emails first, then phone numbers.
+    """``(text, something_was_removed)``.
+
+    Channels first (a profile URL is unambiguous and must not be half-eaten by the phone
+    pattern), then emails, phones, labelled handles and finally labelled contact names —
+    which run last so an already-redacted address cannot be read as the name.
 
     Only the matched spans are replaced, so HTML markup around them survives intact —
     ``<a href="mailto:[redacted]">`` is still a well-formed tag.
     """
     if not value:
         return value, False
-    redacted = _EMAIL.sub(PLACEHOLDER, value)
+    redacted = _CHANNEL.sub(PLACEHOLDER, value)
+    redacted = _EMAIL.sub(PLACEHOLDER, redacted)
     redacted = _PHONE.sub(_phone_sub, redacted)
+    redacted = _HANDLE.sub(_keep_label, redacted)
+    redacted = _NAMED_CONTACT.sub(_keep_label, redacted)
     return redacted, redacted != value
 
 

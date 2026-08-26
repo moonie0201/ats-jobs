@@ -69,7 +69,7 @@ DEFAULTS: dict[str, Any] = {
     "employmentTypes": [],
     "strictEmploymentType": False,
     "postedAfter": None,
-    "includeDescription": False,
+    "includeDescription": True,
     "descriptionFormat": "text",
     "redactContacts": True,
     "outputProfile": "full",

@@ -64,11 +64,20 @@ def test_config_keeps_meaningful_falsy_values():
     assert read_config({})["maxJobs"] == 1000
 
 
-def test_descriptions_and_raw_are_dropped_unless_asked_for():
+def test_descriptions_ship_by_default_and_raw_does_not():
+    """`includeDescription` flipped to default `true`: every provider returns the body in
+    the response we already make, billing is per row either way, so the buyer gets it.
+    `includeRawJson` stays opt-in — it is bulk, not value."""
     record = job(descriptionHtml="<p>hi</p>", descriptionText="hi", raw={"a": 1})
     shape_record(record, read_config({}))
+    assert record.descriptionText == "hi", "descriptionFormat still defaults to 'text'"
+    assert record.descriptionHtml is None
+    assert record.raw is None and record.descriptionRedacted is False
+
+    record = job(descriptionHtml="<p>hi</p>", descriptionText="hi", raw={"a": 1})
+    shape_record(record, read_config({"includeDescription": False}))
     assert record.descriptionHtml is None and record.descriptionText is None
-    assert record.raw is None and record.descriptionRedacted is None
+    assert record.descriptionRedacted is None
 
     record = job(descriptionHtml="<p>hi</p>", descriptionText="hi", raw={"a": 1})
     shape_record(record, read_config({"includeDescription": True, "includeRawJson": True}))

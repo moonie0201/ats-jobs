@@ -154,9 +154,9 @@
       "title": "Include job description",
       "type": "boolean",
       "editor": "checkbox",
-      "description": "Include the full job ad body. Makes items 10x larger. Email addresses and phone numbers are stripped unless you turn redactContacts off. Executable markup (`<script>`, `<iframe>`, `on*=` handlers, `javascript:` URLs) is removed; the remaining HTML is the employer's own and should still be rendered in a sandboxed context.",
+      "description": "On by default, at no extra cost: all six providers return the ad body in the same response we already make, and you are billed per row either way. Makes items about 10x larger — turn it off for a slimmer dataset. The body stays the employer's copyrighted text. Contact details are stripped unless you turn redactContacts off. Executable markup (`<script>`, `<iframe>`, `on*=`, `javascript:`) is removed; the remaining HTML is the employer's own, so render it sandboxed.",
       "sectionCaption": "Output",
-      "default": false
+      "default": true
     },
     "descriptionFormat": {
       "title": "Description format",
@@ -179,7 +179,7 @@
       "title": "Redact contact details from descriptions",
       "type": "boolean",
       "editor": "checkbox",
-      "description": "Strip email addresses and phone numbers from description text before output. On by default: employer-written ad bodies routinely name a contact person, especially on EU boards. Turn off only if your own legal basis covers it.",
+      "description": "Strip contact details from the ad body: email addresses, phone numbers, LinkedIn/Xing/WhatsApp/Calendly/Telegram links and handles, and a person's name where the ad labels it as a contact (`Ansprechpartner:`, `Kontakt:`, `Contactpersoon:`, `Contact:`, `Hiring manager:`, `Recruiter:`). On by default — EU ads routinely close with a named contact. It does not catch a name in running prose: no label, no pattern. `descriptionRedacted` on each row says whether anything was removed.",
       "default": true
     },
     "outputProfile": {

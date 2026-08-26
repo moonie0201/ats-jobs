@@ -52,7 +52,8 @@ def test_the_german_sme_closing_line():
     text, hit = redact_text(body)
     assert hit
     assert "@" not in text and "123456789" not in text
-    assert "Frau Müller" in text  # a name is not a contact detail we can detect
+    assert "Frau Müller" not in text
+    assert text.startswith("Ihre Ansprechpartnerin: [redacted]")  # the label survives
 
 
 def test_clean_bodies_are_untouched():
@@ -189,3 +190,144 @@ def test_the_trunk_pattern_does_not_eat_money_or_years(text: str):
     """The leading `0` and the currency/comma lookbehind are what keep V1 H1's new branch
     off the salary ranges V2 BUG-4 already showed this module can destroy."""
     assert redact_text(text) == (text, False)
+
+
+# --- includeDescription flip: label-anchored names and non-email contact channels -------
+#
+# The flip of `includeDescription` to default `true` is conditional on these two classes
+# being caught. Every string below is one of L3_privacy.md §P1's observed EU-board lines,
+# which that report measured as surviving the email/phone-only redactor verbatim.
+
+
+@pytest.mark.parametrize(
+    ("body", "gone"),
+    [
+        ("Ihre Ansprechpartnerin: Frau Sabine Müller, Personalleitung.", "Sabine Müller"),
+        ("Ansprechpartner: Thomas Becker", "Thomas Becker"),
+        ("Ihr Ansprechpartner: Dr. Peter Wagner, Inhaber", "Peter Wagner"),
+        ("Kontakt: Anna Schmidt.", "Anna Schmidt"),
+        ("Kontaktperson: Herr Thomas Becker\nWir freuen uns.", "Thomas Becker"),
+        ("Contactpersoon: Mevr. Anke de Vries.", "Anke de Vries"),
+        ("Neem contact op met Peter van der Berg.", "Peter van der Berg"),
+        ("Contact : Marie Dubois, Responsable RH", "Marie Dubois"),
+        ("Contact: Anna Schmidt", "Anna Schmidt"),
+        ("Hiring manager: Anna Schmidt.", "Anna Schmidt"),
+        ("Recruiter: Jane Doe\nApply today.", "Jane Doe"),
+        ("Questions? Contact Anna Schmidt.", "Anna Schmidt"),
+        ("Bei Fragen wenden Sie sich an Herrn Thomas Becker.", "Thomas Becker"),
+        ("Ihre Ansprechpartnerin: <strong>Frau Müller</strong>", "Frau Müller"),
+    ],
+)
+def test_a_labelled_contact_name_is_redacted(body: str, gone: str):
+    text, hit = redact_text(body)
+    assert hit and gone not in text, text
+    assert PLACEHOLDER in text
+
+
+def test_the_label_survives_so_the_buyer_can_see_what_was_taken():
+    text, _ = redact_text("Ihre Ansprechpartnerin: Frau Sabine Müller, Personalleitung.")
+    assert text == "Ihre Ansprechpartnerin: [redacted], Personalleitung."
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Message our recruiter Jane Doe on linkedin.com/in/jane-doe-84b21a/",
+        "Bei Fragen: https://www.linkedin.com/in/thomas-becker-1a2b3c",
+        "Wenden Sie sich an xing.com/profile/Thomas_Becker12",
+        "Book a chat with me: calendly.com/tom-thomassen/30min",
+        "Bewirb dich per WhatsApp unter wa.me/4915112345678",
+        "Ping me on https://t.me/sabine_mueller",
+        "Telegram @sabine_mueller",
+        "WhatsApp: @recruiting.anna",
+        "Add me on LinkedIn @jane.doe",
+    ],
+)
+def test_a_non_email_contact_channel_is_redacted(body: str):
+    text, hit = redact_text(body)
+    assert hit and PLACEHOLDER in text
+    for token in ("linkedin.com/in", "xing.com/profile", "calendly.com/", "wa.me/", "t.me/"):
+        assert token not in text, text
+    assert "@sabine_mueller" not in text and "@jane.doe" not in text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A name in running prose: no label, no redaction. The honest gap, held by a test
+        # so it cannot be closed by accident with a name recogniser that shreds ad bodies.
+        "You will report directly to Anna Schmidt, our VP of Engineering.",
+        "This role works closely with Product and with Marie Dubois in Paris.",
+        # Job titles that merely contain a label word.
+        "We are hiring a Contact Center Manager for our Berlin office.",
+        "Our Contact-Center Manager leads a team of twelve.",
+        "Reporting line: Senior Recruiter Operations, Talent Acquisition",
+        # German capitalised common nouns after a real label.
+        "Kontakt: Unser Recruiting Team freut sich auf Ihre Bewerbung",
+        "Contact: die Personalabteilung der Firma",
+        # Employer social links are not personal contact channels.
+        "Follow us at linkedin.com/company/acme for updates.",
+        "See https://www.xing.com/pages/acme-gmbh for our company page.",
+        # Ordinary prose with capitalised words mid-sentence.
+        "You will join the Berlin Platform Team and own delivery end to end.",
+        "We use Python, Kubernetes and Google Cloud Platform every day.",
+    ],
+)
+def test_ordinary_prose_and_job_titles_survive(body: str):
+    assert redact_text(body) == (body, False), body
+
+
+def test_the_flag_fires_for_a_name_only_body():
+    """`descriptionRedacted` has to be true for the new rules too, not just for emails."""
+    html, text, flag = redact_description(
+        "<p>Ansprechpartner: Thomas Becker</p>", "Ansprechpartner: Thomas Becker", True
+    )
+    assert flag is True
+    assert "Thomas Becker" not in html and "Thomas Becker" not in text
+
+
+def test_role_mailboxes_are_removed_like_any_other_address():
+    """Not because they are personal data — they are not — but because `_EMAIL` cannot
+    tell them apart, `test_adapter_lever.py` already asserts `accommodations@` goes, and
+    the buyer has `applyUrl` for applying. Documented rather than exempted."""
+    text, hit = redact_text("Send your CV to jobs@acme.com or careers@acme.com.")
+    assert hit and "@acme.com" not in text
+
+
+# --- observed on the 2026-08-27 live sweep (1,164 EU ad bodies, Personio + Recruitee) ---
+
+
+def test_the_live_dutch_recruiter_line():
+    """recruitee:alliade, live. Three things had to fire together: the role mailbox, the
+    labelled name after `recruiter:`, and a mobile written with an EN DASH — which the
+    ASCII-only separator class shipped whole until this sweep found it."""
+    body = (
+        "Neem dan contact op via recruitment@alliade.nl of bel/app met onze "
+        "corporate recruiter: Annemiek Noord, via 06–29140410"
+    )
+    text, hit = redact_text(body)
+    assert hit
+    assert "Annemiek Noord" not in text
+    assert "recruitment@alliade.nl" not in text
+    assert "29140410" not in text, "en-dash mobile must not survive"
+
+
+def test_the_live_german_whatsapp_deep_link():
+    """personio:1sp-agency, live, on 131 of its rows: a WhatsApp link whose path *is* the
+    recruiter's mobile number. The query tail goes with it."""
+    body = "Schicke das Stichwort #bewerbung an: 030 5093 07522 oder klicke direkt: https://wa.me/4930509307522?text=%23bewerbung"
+    text, hit = redact_text(body)
+    assert hit
+    assert "4930509307522" not in text and "wa.me" not in text
+    assert "%23bewerbung" not in text
+    assert "#bewerbung" in text, "the keyword the applicant has to send is not a contact"
+
+
+def test_the_live_dutch_intermediary_line():
+    body = (
+        "Stuur dan je cv naar recruitment@1klick.nl of neem contact op met "
+        "Bart Mulleneers, partner bij 1KLICK."
+    )
+    text, hit = redact_text(body)
+    assert hit and "Bart Mulleneers" not in text
+    assert "partner bij 1KLICK" in text, "the firm is not a natural person"
