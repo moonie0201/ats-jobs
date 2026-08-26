@@ -36,7 +36,7 @@ from typing import Any
 from core.models import JobRecord, Ref
 from core.normalize.dates import to_iso_utc, utc_now_iso
 from core.normalize.employment import detect_employment
-from core.normalize.html import html_to_text
+from core.normalize.html import html_to_text, sanitize_html
 from core.normalize.identity import apply_identity
 from core.normalize.location import parse_locations
 from core.normalize.redact import redact_description, strip_contact_fields
@@ -89,6 +89,9 @@ def build_job_record(
     description_html, description_text, redacted = redact_description(
         description_html, description_text, redact
     )
+    # V3 S23: applied here, at the one point every provider's body converges, so it cannot
+    # be forgotten per-adapter. After redaction, so the sanitiser never sees a contact.
+    description_html = sanitize_html(description_html)
 
     # 2. Location (§4.5.1). ``locations[]`` comes back sorted, so nothing downstream can
     #    forget step 8 and flip ``changeHash`` on a provider reshuffle.

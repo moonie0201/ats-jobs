@@ -260,6 +260,19 @@ def _from_text(text: str, raw_text: str) -> Location:
             code, country = match
             index -= 1
 
+    # Country-first order. Agile Robots writes its Personio `office` as
+    # "Germany, Munich (HQ)" on 64 of 64 jobs; right-to-left alone found no country and
+    # then swept the word "Germany" into `city`, so a board that names its country
+    # outright shipped `countryCode: null` and a city of "Germany, Munich (HQ)". Only
+    # consulted once the right-to-left walk has failed, so "Atlanta, Georgia" is still
+    # read as the US state it almost always means.
+    if code is None and index >= 1:
+        match = country_by_token(parts[0])
+        if match:
+            code, country = match
+            parts = parts[1:]
+            index -= 1
+
     if index >= 0:
         parent = subdivision_country(parts[index])
         if parent and (code is None or parent == code):

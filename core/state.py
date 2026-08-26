@@ -102,7 +102,16 @@ class SeenState:
         return new
 
     def prune(self, retention_days: int, *, now: datetime | None = None) -> int:
-        """Drop ids not seen for `stateRetentionDays`. 0 keeps everything (§4.1)."""
+        """Drop ids not seen for `stateRetentionDays`. 0 keeps everything (§4.1).
+
+        Clamped at both ends before it is used. A **negative** value put the cutoff a day
+        in the *future*, so every id was stale and `save()` then persisted the empty dict:
+        the next run saw no baseline, treated every job as new and charged for all of them
+        (V1 H2). A huge value overflowed `timedelta(days=...)` and failed the run outright
+        (V3 S21). The schema's `minimum: 0` binds the Console form only — API, CLI and
+        `call-actor` callers reach here unfiltered.
+        """
+        retention_days = min(max(0, int(retention_days or 0)), 3650)
         if not retention_days:
             return 0
         cutoff = (now or datetime.now(UTC)).astimezone(UTC) - timedelta(days=retention_days)

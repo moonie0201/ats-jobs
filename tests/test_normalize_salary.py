@@ -476,3 +476,154 @@ def test_an_empty_compensation_object_lets_the_regex_fallback_run():
 def test_a_populated_compensation_object_still_claims_the_ats_source():
     parsed = parse_salary({"salaryRange": {"currency": "USD", "min": 100000, "max": 120000}})
     assert parsed.source == "ats" and parsed.min == 100000
+
+
+# --- Greenhouse indistinguishable bands (live run, §10.2) -----------------------------
+
+#: Databricks' real shape on 139 of 824 jobs: four zone bands, one currency, one
+#: interval, no place anywhere in the label, and `location.name` == "United States".
+DATABRICKS_ZONES = [
+    {
+        "min_cents": 14660000,
+        "max_cents": 20165000,
+        "currency_type": "USD",
+        "title": "Zone 1 Pay Range",
+        "blurb": "<p>Databricks is committed to fair pay.</p>",
+    },
+    {
+        "min_cents": 13200000,
+        "max_cents": 18150000,
+        "currency_type": "USD",
+        "title": "Zone 2 Pay Range",
+        "blurb": "",
+    },
+    {
+        "min_cents": 12460000,
+        "max_cents": 17140000,
+        "currency_type": "USD",
+        "title": "Zone 3 Pay Range",
+        "blurb": "",
+    },
+    {
+        "min_cents": 11730000,
+        "max_cents": 16125000,
+        "currency_type": "USD",
+        "title": "Zone 4 Pay Range",
+        "blurb": "",
+    },
+]
+
+
+def test_greenhouse_indistinguishable_bands_are_spanned_not_picked():
+    """`ranges[0]` published Zone 1 — the top band — as *the* salary and overstated the
+    floor by 25%. Nothing in the payload says which zone the job is in, so the span is
+    the only true statement about it."""
+    location = Location(raw="United States", country="United States", countryCode="US")
+    salary = parse_salary({"pay_input_ranges": DATABRICKS_ZONES}, None, location)
+    assert (salary.min, salary.max) == (117300, 201650)
+    assert (salary.currency, salary.interval, salary.source) == ("USD", "year", "ats")
+    assert salary.raw == "Zone 1 Pay Range / Zone 2 Pay Range / Zone 3 Pay Range / Zone 4 Pay Range"
+
+
+def test_greenhouse_currency_tiebreak_narrows_before_it_spans():
+    """A USD band beside two EUR ones: the EUR pair is what a German job may be paid,
+    and the USD band must not be spanned into it."""
+    ranges = [
+        {"min_cents": 18000000, "max_cents": 24000000, "currency_type": "USD", "title": "US"},
+        {"min_cents": 9000000, "max_cents": 11000000, "currency_type": "EUR", "title": "EU A"},
+        {"min_cents": 8000000, "max_cents": 10000000, "currency_type": "EUR", "title": "EU B"},
+    ]
+    location = Location(raw="Berlin", city="Berlin", country="Germany", countryCode="DE")
+    salary = parse_salary({"pay_input_ranges": ranges}, None, location)
+    assert (salary.min, salary.max, salary.currency) == (80000, 110000, "EUR")
+
+
+def test_greenhouse_a_named_locale_still_wins_outright_over_the_span():
+    location = Location(raw="Dublin, Ireland", city="Dublin", country="Ireland", countryCode="IE")
+    salary = parse_salary({"pay_input_ranges": GH_MULTI}, None, location)
+    assert (salary.min, salary.max, salary.raw) == (90000, 110000, None)
+
+
+def test_greenhouse_bands_that_disagree_on_interval_are_never_spanned():
+    """Spanning an hourly band into an annual one would invent a 1:4000 range."""
+    ranges = [
+        {"min_cents": 5100, "max_cents": 6000, "currency_type": "USD", "title": "Hourly Rate"},
+        {
+            "min_cents": 14660000,
+            "max_cents": 20165000,
+            "currency_type": "USD",
+            "title": "Annual Pay Range",
+        },
+    ]
+    salary = parse_salary({"pay_input_ranges": ranges}, None, None)
+    assert (salary.min, salary.max, salary.interval) == (51, 60, "hour")
+    assert salary.raw == "Hourly Rate"
+
+
+# --- V1 H5: step 1 had no sanity gates at all -----------------------------------------
+
+
+def test_ashby_never_spans_two_different_intervals():
+    """V1 H5: `_ashby` widened min/max across every Salary component while reading
+    currency and interval off `components[0]`, so a posting carrying both an hourly and an
+    annual band shipped `min=25 max=200000 interval='hour'` labelled `salarySource: "ats"`
+    — on the provider the README calls the cleanest of the six."""
+    job = {
+        "compensation": {
+            "summaryComponents": [
+                {
+                    "compensationType": "Salary",
+                    "minValue": 25,
+                    "maxValue": 60,
+                    "currencyCode": "USD",
+                    "interval": "1 HOUR",
+                },
+                {
+                    "compensationType": "Salary",
+                    "minValue": 150000,
+                    "maxValue": 200000,
+                    "currencyCode": "USD",
+                    "interval": "1 YEAR",
+                },
+                {
+                    "compensationType": "Salary",
+                    "minValue": 160000,
+                    "maxValue": 210000,
+                    "currencyCode": "USD",
+                    "interval": "1 YEAR",
+                },
+            ]
+        }
+    }
+    salary = structured_salary(job)
+    assert (salary.min, salary.max) == (150000.0, 210000.0)
+    assert (salary.interval, salary.currency, salary.source) == ("year", "USD", "ats")
+
+
+def test_an_implausible_structured_band_is_not_published_as_the_ats_answer():
+    """V1 H5: §4.5.3's ratio gate lived in `_rejected`, which runs on the regex path only,
+    so step 1 was ungated for all six providers. R13 — a wrong salary is worse than none."""
+    absurd = {"salaryRange": {"min": 25, "max": 200000, "currency": "USD", "interval": "year"}}
+    assert parse_salary(absurd).source is None
+    honest = {"salaryRange": {"min": 150000, "max": 200000, "currency": "USD", "interval": "year"}}
+    assert parse_salary(honest).source == "ats"
+
+
+def test_a_real_high_magnitude_currency_still_ships():
+    """The shared gate is currency-agnostic on purpose: Ashby publishes a genuine
+    `COP 248M - COP 310M` per year (about $60k USD), and a USD-shaped absolute ceiling
+    would delete it. Only a band that contradicts *itself* is rejected at step 1."""
+    job = {
+        "compensation": {
+            "summaryComponents": [
+                {
+                    "compensationType": "Salary",
+                    "minValue": 248_000_000,
+                    "maxValue": 310_000_000,
+                    "currencyCode": "COP",
+                    "interval": "1 YEAR",
+                }
+            ]
+        }
+    }
+    assert structured_salary(job).source == "ats"

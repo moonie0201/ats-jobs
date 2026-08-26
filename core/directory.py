@@ -20,6 +20,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from core.http import _OWNER_RE, checked_env
 from core.models import Ref
 from core.resolve import valid_slug
 
@@ -27,20 +28,14 @@ logger = logging.getLogger(__name__)
 
 #: The two env knobs are validated before they are formatted into a URL: jsDelivr serves
 #: *any* GitHub repo, so an unchecked owner flips the trusted directory to attacker
-#: content, which S2 then turns into an OOM (V3 S7).
-_OWNER_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
-_COMMIT_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
+#: content, which S2 then turns into an OOM (V3 S7). `_OWNER_RE` and the validator live in
+#: `core.http` so the `ATS_REPO_OWNER` that lands in the User-Agent shares them (V3 S27).
+#: `..` is excluded from the commit charset: `@../companies.jsonl.gz` is path confusion
+#: inside jsDelivr, harmless only because `check_host` still pins the host.
+_COMMIT_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._-]{1,40}$")
 
-
-def _checked(value: str, pattern: re.Pattern[str], default: str) -> str:
-    if pattern.match(value):
-        return value
-    logger.warning("ignoring malformed directory source %r", value)
-    return default
-
-
-OWNER = _checked(os.environ.get("ATS_DIRECTORY_OWNER", "ats-jobs"), _OWNER_RE, "ats-jobs")
-COMMIT = _checked(os.environ.get("ATS_DIRECTORY_COMMIT", "main"), _COMMIT_RE, "main")
+OWNER = checked_env(os.environ.get("ATS_DIRECTORY_OWNER", "ats-jobs"), _OWNER_RE, "ats-jobs")
+COMMIT = checked_env(os.environ.get("ATS_DIRECTORY_COMMIT", "main"), _COMMIT_RE, "main")
 
 JSDELIVR_URL = "https://cdn.jsdelivr.net/gh/{owner}/ats-directory@{commit}/companies.jsonl.gz"
 RAW_URL = "https://raw.githubusercontent.com/{owner}/ats-directory/main/companies.jsonl.gz"
@@ -53,7 +48,15 @@ GZIP_MAGIC = b"\x1f\x8b"
 #: A 102 kB gzip blob decompresses to 100 MB at ratio 1028x — enough to OOM-kill the
 #: container at every `actor.json` memory tier (V3 S2). `GzipFile.read(n)` inflates
 #: incrementally, so the bomb never lands.
-MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
+#:
+#: Sized at 4x the ~2 MB live directory rather than at "what a bomb looks like" (V3 S20):
+#: nothing consumes these bytes, `parse_jsonl` turns them into resident dicts at a
+#: measured 6.9x, so the old 64 MB cap admitted a 25 kB file that needs ~444 MB resident
+#: against `actor.json`'s `minMemoryMbytes: 256`. 8 MB is ~55 MB resident.
+MAX_DIRECTORY_BYTES = 8 * 1024 * 1024
+
+#: Rows, not just bytes: a pathological line count reaches the same OOM by another door.
+MAX_DIRECTORY_ROWS = 500_000
 
 
 def _gunzip_capped(blob: bytes, limit: int | None = None) -> bytes:
@@ -78,6 +81,8 @@ def parse_jsonl(blob: bytes) -> list[dict[str, Any]]:
         except ValueError:
             continue
         if isinstance(row, dict) and row.get("provider") and row.get("slug"):
+            if len(rows) >= MAX_DIRECTORY_ROWS:
+                raise ValueError(f"directory exceeds {MAX_DIRECTORY_ROWS} rows")
             rows.append(row)
     return rows
 

@@ -107,15 +107,27 @@ def _ashby(job: dict[str, Any]) -> Salary | None:
     if not components:
         return Salary(raw=summary) if summary else None
 
-    # Widest min…max across the Salary components (§4.5.3).
-    lows = [v for v in (_number(c.get("minValue")) for c in components) if v is not None]
-    highs = [v for v in (_number(c.get("maxValue")) for c in components) if v is not None]
-    first = components[0]
+    # Widest min…max across the Salary components (§4.5.3) — but only *within* one
+    # currency+interval. Widening across all of them while reading `currency`/`interval`
+    # off `components[0]` produced, on a live posting carrying both an hourly and an
+    # annual band, `min=25.0 max=200000.0 interval='hour'` labelled `salarySource: "ats"`
+    # (V1 H5). Spanning a 1:8,000 range is not a wider answer, it is a wrong one.
+    groups: dict[tuple[str | None, str | None], list[dict[str, Any]]] = {}
+    for component in components:
+        key = (
+            _currency(component.get("currencyCode")),
+            ashby_interval(_text(component.get("interval"))),
+        )
+        groups.setdefault(key, []).append(component)
+    (currency, interval), chosen = max(groups.items(), key=lambda item: len(item[1]))
+
+    lows = [v for v in (_number(c.get("minValue")) for c in chosen) if v is not None]
+    highs = [v for v in (_number(c.get("maxValue")) for c in chosen) if v is not None]
     return Salary(
         min=min(lows) if lows else None,
         max=max(highs) if highs else None,
-        currency=_currency(first.get("currencyCode")),
-        interval=ashby_interval(_text(first.get("interval"))),
+        currency=currency,
+        interval=interval,
         source="ats",
         raw=summary,
     )
@@ -189,12 +201,16 @@ def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None
     if not ranges:
         return None
     chosen, raw = _pick_greenhouse_range(ranges, location)
-    low, high = _number(chosen.get("min_cents")), _number(chosen.get("max_cents"))
+    # Several bands come back only when they could not be told apart; then the honest
+    # answer is their span, exactly as `_ashby` spans its Salary components.
+    lows = [v for v in (_number(band.get("min_cents")) for band in chosen) if v is not None]
+    highs = [v for v in (_number(band.get("max_cents")) for band in chosen) if v is not None]
+    intervals = {_range_interval(band) for band in chosen}
     return Salary(
-        min=low / 100 if low is not None else None,
-        max=high / 100 if high is not None else None,
-        currency=_currency(chosen.get("currency_type")),
-        interval=_range_interval(chosen),
+        min=min(lows) / 100 if lows else None,
+        max=max(highs) / 100 if highs else None,
+        currency=_currency(chosen[0].get("currency_type")),
+        interval=intervals.pop() if len(intervals) == 1 else None,
         source="ats",
         raw=raw,
     )
@@ -202,21 +218,23 @@ def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None
 
 def _pick_greenhouse_range(
     ranges: list[dict[str, Any]], location: Location | None
-) -> tuple[dict[str, Any], str | None]:
+) -> tuple[list[dict[str, Any]], str | None]:
     """§4.5.3 multi-range selection. Taking ``[0]`` attaches a US salary to a Dublin job.
 
-    Returns ``(range, salaryRaw)``; ``salaryRaw`` is the range's own ``title`` only when
-    the choice was a fallback, so the buyer can see which locale they got.
+    Returns ``(bands, salaryRaw)``. **More than one band means the ranges could not be
+    told apart** and the caller must span them rather than pick one. ``salaryRaw`` names
+    the titles involved whenever the answer was not a clean tie-break, so the buyer can
+    see what they got.
     """
     if len(ranges) == 1:
-        return ranges[0], None
+        return ranges, None
 
     # A range whose label contradicts its own magnitude is not a candidate while a
     # coherent one exists: Verkada publishes a $1.00 "Estimated Hourly Pay Range" beside
     # the real $225k-$265k annual range, and `ranges[0]` used to win it outright.
     ranges = [band for band in ranges if _range_interval(band) is not None] or ranges
     if len(ranges) == 1:
-        return ranges[0], None
+        return ranges, None
 
     places = (location.country, location.region, location.city) if location else ()
     wanted = [w.casefold() for w in places if w]
@@ -225,15 +243,25 @@ def _pick_greenhouse_range(
             filter(None, (_text(candidate.get("title")), _text(candidate.get("blurb"))))
         ).casefold()
         if label and any(word in label for word in wanted):
-            return candidate, None
+            return [candidate], None
 
+    # The currency tie-break *narrows* the candidates; it never picks one. Taking the
+    # first currency match was the same coin-flip as taking `ranges[0]` whenever a board
+    # prices one posting in one currency several times over.
     currency = country_currency(location.countryCode) if location else None
     if currency:
-        for candidate in ranges:
-            if _currency(candidate.get("currency_type")) == currency:
-                return candidate, None
+        ranges = [b for b in ranges if _currency(b.get("currency_type")) == currency] or ranges
+    if len(ranges) == 1:
+        return ranges, None
 
-    return ranges[0], _text(ranges[0].get("title"))
+    # Indistinguishable bands: Databricks publishes "Zone 1..4 Pay Range" for one US
+    # posting — same currency, same interval, no place anywhere in the label — and
+    # `ranges[0]` published Zone 1, the *top* band, as the salary on 137 of its 139
+    # multi-range jobs, overstating the floor by 25% ($146,600 against $117,300).
+    titles = [t for t in (_text(band.get("title")) for band in ranges) if t]
+    if len({(_currency(b.get("currency_type")), _range_interval(b)) for b in ranges}) == 1:
+        return ranges, " / ".join(titles) or None
+    return [ranges[0]], _text(ranges[0].get("title"))
 
 
 def _recruitee(job: dict[str, Any]) -> Salary | None:
@@ -283,10 +311,35 @@ def _checked(found: Salary) -> Salary:
     the regex fallback in :func:`parse_salary` — Lever ``salaryRange: {"currency": "USD"}``,
     a Greenhouse range with no ``min_cents`` and a Rippling band with neither bound all
     did exactly that (V1 H4). Gated once here, for every provider.
+
+    An *implausible* band fails step 1 the same way (V1 H5): §4.5.3's ratio and magnitude
+    gates used to run on the regex path only, so the structured path — the one the output
+    labels as the ATS's own answer — was the ungated one on all six providers. Dropping
+    ``source`` here is not a discard: :func:`parse_salary` already treats a non-``"ats"``
+    result as a failed step 1 and falls through to the regex, which is the degradation
+    path this function was written for.
     """
     if found.source == "ats" and found.min is None and found.max is None:
         found.source = None
+    elif found.source == "ats" and not _plausible(found.min, found.max, found.interval):
+        found.source = None
     return found
+
+
+def _plausible(low: float | None, high: float | None, interval: str | None) -> bool:
+    """§4.5.3's two *currency-agnostic* gates, shared by step 1 and step 2.
+
+    Only these two are shared. §4.5.3's absolute year/hour bounds are deliberately left on
+    the step-2 path alone: Ashby publishes a real ``COP 248M – COP 310M`` per year (about
+    $60k USD), so any absolute magnitude gate must be currency-aware or it deletes honest
+    data — and an ATS publishing its own structured number has earned more benefit of the
+    doubt than a regex over prose. A band that contradicts *itself* needs no currency
+    table to be recognised, which is what both paths can safely reject.
+    """
+    del interval  # kept in the signature for the caller's readability at both call sites
+    if low is None or high is None:
+        return True  # a one-sided band says nothing about its own plausibility
+    return not (low > high or (low > 0 and high / low > 20))
 
 
 # --- step 2: regex fallback ---------------------------------------------------------------
@@ -374,8 +427,13 @@ def _window_interval(text: str, match: re.Match[str]) -> str | None:
 
 
 def _rejected(text: str, match: re.Match[str], low: float, high: float, interval: str) -> bool:
-    """The five rejection gates plus the poison-word guard (§4.5.3)."""
-    if low > high or (low > 0 and high / low > 20):
+    """The five rejection gates plus the poison-word guard (§4.5.3).
+
+    The ratio gate is :func:`_plausible`, shared with step 1 (V1 H5); the absolute
+    year/hour bounds stay here, because they are USD-shaped and step 1 has the provider's
+    own currency-tagged word for it.
+    """
+    if not _plausible(low, high, interval):
         return True
     if interval == "year" and (high > 5_000_000 or low < 1_000):
         return True

@@ -97,8 +97,16 @@ def canon_company(name: str | None) -> str:
 
 
 def make_id(provider: str | None, company_slug: str | None, source_id: str | None) -> str:
-    """``id = "{provider}:{company_slug}:{source_id}".lower()`` (§4.5.6 verbatim)."""
-    return f"{provider or ''}:{company_slug or ''}:{source_id or ''}".lower()
+    """``id = "{provider}:{company_slug}:{source_id}".lower()`` (§4.5.6 verbatim).
+
+    Empty when there is no ``source_id`` to key on. Returning ``"provider:slug:"`` was
+    never an empty string, so `dedupe`'s `if record.id:` guard was always true and every
+    id-less job on a board shared one key: all but the first were silently counted as
+    duplicates and dropped (V1 L10). An id we cannot build is not an id every job shares.
+    """
+    if not source_id:
+        return ""
+    return f"{provider or ''}:{company_slug or ''}:{source_id}".lower()
 
 
 def content_key(

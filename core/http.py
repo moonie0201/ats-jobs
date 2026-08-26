@@ -12,9 +12,11 @@ by `maxConcurrency` and break the politeness ceiling the legal posture rests on
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,9 +24,25 @@ from urllib.parse import urlsplit
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
+#: The one validator for every env-supplied GitHub owner in this codebase. `core.directory`
+#: imports it rather than keeping a second copy: the UA *is* the legal posture's identifier
+#: (§5, §14 R21), so a malformed value must not ship silently (V3 S27).
+_OWNER_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+
+
+def checked_env(value: str, pattern: re.Pattern[str], default: str) -> str:
+    """Env value if it matches, else the default with a warning. Never raises."""
+    if pattern.match(value):
+        return value
+    logger.warning("ignoring malformed value %r; using %r", value, default)
+    return default
+
+
 #: `<owner>` in §5's UA string is a repo placeholder; it is filled at runtime so the
 #: header never ships a literal angle-bracket token.
-REPO_OWNER = os.environ.get("ATS_REPO_OWNER", "ats-jobs")
+REPO_OWNER = checked_env(os.environ.get("ATS_REPO_OWNER", "ats-jobs"), _OWNER_RE, "ats-jobs")
 USER_AGENT = f"ats-jobs-scraper/0.1 (+https://github.com/{REPO_OWNER}/ats-jobs)"
 
 DEFAULT_HEADERS: dict[str, str] = {
@@ -51,8 +69,18 @@ JITTER = 0.25
 
 #: Hard ceiling on a decompressed response body. `Accept-Encoding: gzip` means httpx
 #: inflates for us, so a 200 kB hostile answer can otherwise land as 200 MB in RAM and
-#: OOM-kill a 1 GB Actor container (V3 S3). The largest live board measured is 4.5 MB.
-MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+#: OOM-kill a 1 GB Actor container (V3 S3).
+#:
+#: Sized against the container, not against a bomb (V3 S20): the largest live board
+#: measured is 4.5 MB and Greenhouse's own re-fetch guard trips at 40 MB, while
+#: `json.loads` costs a measured ~2x the wire bytes again. `maxConcurrency: 32` x this
+#: must stay inside `actor.json`'s `maxMemoryMbytes: 1024` — see the assert in
+#: :func:`make_client`, which is what keeps the two numbers from drifting apart.
+MAX_RESPONSE_BYTES = 24 * 1024 * 1024
+
+#: Redirect hops are capped so an allowlisted host cannot redirect-loop inside the
+#: allowlist and spend the company budget on hops (V3 S19).
+MAX_REDIRECTS = 5
 
 #: `Retry-After: inf` parsed straight through `float()` used to reach `asyncio.sleep(inf)`
 #: (V3 S5). One header must never cost more than a company's own budget.
@@ -78,14 +106,29 @@ ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (
 
 
 class FetchError(Exception):
-    """Base for every fetch failure. ``status`` is the §5.12 summary status verbatim."""
+    """Base for every fetch failure. ``status`` is the §5.12 summary status verbatim.
+
+    ``retryable`` is read by :meth:`Client.get_json` and defaults to ``False``: a parser
+    that raises a *typed* error has decided something about the body itself, and re-asking
+    for the same bytes costs a round trip, a rate-limit token and a backoff sleep for a
+    guaranteed identical answer (V3 S26). A parser sets it only where the body may have
+    been damaged in transit rather than being wrong on its own terms.
+    """
 
     status = "http_error"
 
-    def __init__(self, message: str, *, url: str | None = None, http_status: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        url: str | None = None,
+        http_status: int | None = None,
+        retryable: bool = False,
+    ):
         super().__init__(message)
         self.url = url
         self.http_status = http_status
+        self.retryable = retryable
 
 
 class NotFound(FetchError):
@@ -141,6 +184,11 @@ def check_host(url: str) -> None:
         host == suffix.lstrip(".") or host.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES
     ):
         raise HttpError(f"refusing non-ATS host: {host!r}", url=url)
+
+
+async def _check_request(request: httpx.Request) -> None:
+    """httpx request hook — :func:`check_host` on every hop, not just the first (V3 S19)."""
+    check_host(str(request.url))
 
 
 async def read_capped(response: httpx.Response, limit: int | None = None) -> bytes:
@@ -322,6 +370,14 @@ class Client:
             try:
                 return parse(response) if parse else response.json()
             except Exception as exc:
+                # V3 S26: `personio.parse_feed` raises a typed `FetchError` to say
+                # "well-formed body, not a jobs feed" or "attack payload" — deterministic
+                # verdicts about these exact bytes. Retrying one buys a second round trip,
+                # a second rate-limit token and a second backoff sleep for a guaranteed
+                # identical answer. Only a body that may have been damaged in transit is
+                # marked `retryable` and earns §5.12's soft retry.
+                if isinstance(exc, FetchError) and not exc.retryable:
+                    raise
                 if soft < SOFT_RETRIES:
                     soft += 1
                     await self._sleep(backoff_delay(soft))
@@ -339,11 +395,23 @@ def make_client(
     clock: Callable[[], float] = time.monotonic,
 ) -> Client:
     """The one place an HTTP client is built. `requestTimeoutSecs` maps straight in."""
+    # V3 S20: the concurrency budget, asserted where it is chosen rather than left as a
+    # comment that a later `max_connections` bump would not read.
+    assert max_connections * MAX_RESPONSE_BYTES <= 768 * 1024 * 1024, (
+        "max_connections x MAX_RESPONSE_BYTES exceeds the OOM budget at maxMemoryMbytes: 1024"
+    )
     http = httpx.AsyncClient(
         headers=DEFAULT_HEADERS,
         timeout=httpx.Timeout(timeout_secs),
         follow_redirects=False,
+        max_redirects=MAX_REDIRECTS,
         limits=httpx.Limits(max_connections=max_connections),
         transport=transport,
+        # V3 S19: `check_host` used to run on the handed-in URL only, so a 302 off an
+        # allowlisted host reached anything — the PoC exfiltrated `169.254.169.254` over
+        # plaintext http through the directory loader's `follow_redirects=True`. A request
+        # hook fires for *every* request httpx issues, redirect hops included, so the sink
+        # guard is structurally impossible to skip from a new call site.
+        event_hooks={"request": [_check_request]},
     )
     return Client(http, sleep=sleep, rate_limits=rate_limits, clock=clock)

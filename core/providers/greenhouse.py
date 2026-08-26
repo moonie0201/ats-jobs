@@ -30,6 +30,7 @@ from typing import Any
 
 import httpx
 
+from core.http import MAX_RESPONSE_BYTES
 from core.models import JobRecord, ProviderSpec, Ref
 from core.normalize.dates import pick_date
 from core.normalize.html import unescape_once
@@ -41,7 +42,12 @@ API_BASE = "https://boards-api.greenhouse.io/v1/boards"
 
 #: §5.1: `content=true` on a 5,000-job board can exceed 30 MB. Past this the board is
 #: re-requested without the descriptions and every row carries :data:`SIZE_WARNING`.
-MAX_BODY_BYTES = 40 * 1024 * 1024
+#:
+#: Derived from the transport's own cap rather than written out, because it has to stay
+#: *below* it: at a flat 40 MB against a 24 MB `MAX_RESPONSE_BYTES` (V3 S20) this guard
+#: was unreachable — `read_capped` raised `parse_error` first and the graceful
+#: re-fetch-without-descriptions path was dead code.
+MAX_BODY_BYTES = MAX_RESPONSE_BYTES * 2 // 3
 SIZE_WARNING = "description_omitted_size"
 
 #: §5.1 correction 2. The spec's own regex (`^\s*\d{2,6}\s*[-–—]\s*`) only covers

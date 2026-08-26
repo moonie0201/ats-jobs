@@ -4,12 +4,15 @@ One request per company::
 
     GET https://{slug}.jobs.personio.de/xml   ->  <workzag-jobs><position>…
 
-**No ``?language=`` parameter.** Personio serves the requested language and does *not*
-fall back to the ad's own: on ``1komma5grad`` (322 positions) ``?language=en`` returns 35
-positions with a body and 287 with ``<jobDescriptions></jobDescriptions>``, while the
-bare URL returns 321. Since ``descriptionText`` also feeds §4.5.2 rank 5 and §4.5.3
-step 2, asking for English on a German board silently emptied the body, the remote flag
-and the parsed salary for 89% of the board's jobs.
+**No ``?language=`` parameter by default.** Personio serves the requested language and
+does *not* fall back to the ad's own: on ``1komma5grad`` (322 positions) ``?language=en``
+returns 35 positions with a body and 287 with ``<jobDescriptions></jobDescriptions>``,
+while the bare URL returns 321. Since ``descriptionText`` also feeds §4.5.2 rank 5 and
+§4.5.3 step 2, asking for English on a German board silently emptied the body, the remote
+flag and the parsed salary for 89% of the board's jobs. The same trap runs the other way —
+``agile-robots-se`` ships 56 of 64 positions bodiless in its own language and full under
+``?language=en`` — so :func:`_fill_empty_bodies` spends one extra request to backfill,
+and only on a board that is mostly empty.
 
 No pagination, no detail call — the description sections are inline as CDATA. An unknown
 board answers **307** (§5.12 maps 3xx to `not_found`, and `core.http.Client` never follows
@@ -33,7 +36,7 @@ from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import ParseError as XMLParseError
 from defusedxml.ElementTree import fromstring
 
-from core.http import Client, NotFound, ParseError
+from core.http import Client, FetchError, NotFound, ParseError
 from core.models import JobRecord, ProviderSpec, Ref
 from core.normalize.record import build_job_record
 
@@ -90,13 +93,21 @@ def parse_feed(payload: str | bytes) -> list[dict[str, Any]]:
     Raises :class:`core.http.ParseError` on malformed XML **and** on a well-formed body
     that is not the jobs feed (§5.8 "Non-XML body -> parse_error"). Bytes are preferred
     over text so the XML declaration decides the encoding, not the HTTP header.
+
+    Only one of the three failures is marked ``retryable``, because §5.12 grants its soft
+    retry to a *damaged* body, not to a body that is simply wrong (V3 S26). Broken XML may
+    be a truncated transfer and is worth one more request; an attack payload and a feed
+    with the wrong root element are deterministic verdicts about these exact bytes, and
+    re-asking spends a rate-limit token to be told the same thing again.
     """
     try:
         root = fromstring(payload)
-    except (XMLParseError, DefusedXmlException) as exc:
-        # DefusedXmlException covers the attack payloads (entities, DTD, external refs);
-        # both are a `parse_error` to the caller, never a crash (§5.12).
-        raise ParseError(f"malformed Personio XML: {exc}") from exc
+    except DefusedXmlException as exc:
+        # Entities, DTDs and external refs: a `parse_error` to the caller, never a crash
+        # (§5.12) — and never re-fetched, because the answer cannot change.
+        raise ParseError(f"refused Personio XML: {exc}") from exc
+    except XMLParseError as exc:
+        raise ParseError(f"malformed Personio XML: {exc}", retryable=True) from exc
     if root.tag != ROOT_TAG:
         raise ParseError(f"not a Personio jobs feed: root <{root.tag}>, expected <{ROOT_TAG}>")
     return [_position(position) for position in root.findall("position")]
@@ -157,6 +168,52 @@ def _parse_response(response: httpx.Response) -> list[dict[str, Any]]:
     return parse_feed(response.content)
 
 
+#: Past this share of bodiless positions the board's own language is not where the ads
+#: are, and one extra request is worth it. Below it, nothing is spent.
+EMPTY_BODY_RATIO = 0.5
+#: The only other language worth one request: it is the lingua franca of the boards that
+#: author their ads outside their own locale.
+FALLBACK_LANGUAGE = "en"
+
+
+def _has_body(position: dict[str, Any]) -> bool:
+    sections = position.get("jobDescriptions")
+    return isinstance(sections, list) and any(
+        isinstance(s, dict) and s.get("value") for s in sections
+    )
+
+
+async def _fill_empty_bodies(
+    client: Client, slug: str, host: str, positions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Backfill ad bodies from ``?language=en`` for a board whose own language has none.
+
+    Personio serves exactly the language asked for and never falls back, in *either*
+    direction: asking for English emptied 89% of a German board (which is why no
+    ``language`` is sent by default), and Agile Robots' default feed ships
+    ``<jobDescriptions></jobDescriptions>`` on 56 of its 64 positions while
+    ``?language=en`` carries 58 of them. One request, only for a board that needs it, and
+    the board's own language still wins wherever it has a body.
+    """
+    missing = [p for p in positions if not _has_body(p)]
+    if not missing or len(missing) <= len(positions) * EMPTY_BODY_RATIO:
+        return positions
+    try:
+        english = await client.get_json(
+            list_url(slug, host),
+            params={"language": FALLBACK_LANGUAGE},
+            parse=_parse_response,
+        )
+    except FetchError:
+        return positions  # §5.12: a failed backfill is not a failed company
+    bodies = {p.get("id"): p["jobDescriptions"] for p in english if p.get("id") and _has_body(p)}
+    for position in missing:
+        body = bodies.get(position.get("id"))
+        if body:
+            position["jobDescriptions"] = body
+    return positions
+
+
 async def fetch(
     ref: Ref,
     client: Client,
@@ -178,5 +235,6 @@ async def fetch(
         except NotFound as exc:
             missing = exc
             continue
+        positions = await _fill_empty_bodies(client, ref.slug, host, positions)
         return [to_record(position, ref, options, host) for position in positions]
     raise missing or NotFound(f"no Personio board for {ref.slug!r}")

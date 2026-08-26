@@ -44,15 +44,33 @@ def parse_datetime(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+#: A cutoff older than any ATS posting means the same thing as no cutoff at all, which is
+#: why an overflow floors here instead of raising (V3 S21). `RELATIVE_RE` puts no bound on
+#: the amount, and there are *two* overflow points, not one: `timedelta * amount` raises
+#: on "99999999999999999999 years", and "10000 years" gets past the multiply only to
+#: overflow at the subtraction below — so clamping the amount does not cover it and one
+#: `except OverflowError` around both does.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
 def parse_posted_after(value: str | None, *, now: datetime | None = None) -> datetime | None:
-    """ "2026-08-01" or "7 days" -> cutoff. Unparseable -> None (caller warns)."""
+    """ "2026-08-01" or "7 days" -> cutoff. Unparseable -> None (caller warns).
+
+    Never raises. `Filters.from_input` is called from `src/main.py` inside `async with
+    Actor:` but outside every `try`, before a single company is resolved, so an exception
+    here exits the run FAILED with a raw traceback — no error row, no summary, nothing the
+    buyer can act on. That is the opposite of the shell's "degrade, never fail" posture.
+    """
     if not value or not str(value).strip():
         return None
     text = str(value).strip()
     match = RELATIVE_RE.match(text)
     if match:
         amount, unit = int(match.group(1)), match.group(2).lower()
-        return (now or datetime.now(UTC)) - _RELATIVE_UNITS[unit] * amount
+        try:
+            return (now or datetime.now(UTC)) - _RELATIVE_UNITS[unit] * amount
+        except OverflowError:
+            return _EPOCH
     return parse_datetime(text)
 
 
@@ -114,6 +132,40 @@ class Filters:
             or self.posted_after
         )
 
+    def _location_matches(self, record: JobRecord) -> bool:
+        """`locationKeywords`, with a two-letter needle read as a country **code**.
+
+        A plain substring test over the whole haystack kept `"Toulouse, France"` for
+        `["US"]` and `"Stockholm, Sweden"` for `["DE"]` — and the input schema recommended
+        `DE` verbatim as its example, so the schema induced its own worst case. This filter
+        runs *before* billing, which makes every false positive a charged row the buyer did
+        not want: the §8.2 failure mode arriving through a different door (V1 M2).
+
+        Short needles are matched exactly against `countryCode` only; anything longer keeps
+        the substring behaviour, so `"Berlin"`, `"Germany"` and `"EMEA"` work as before.
+        """
+        codes = {
+            code.casefold()
+            for code in (record.countryCode, *(loc.countryCode for loc in record.locations))
+            if code
+        }
+        short = {n for n in self.location_keywords if len(n) <= 2}
+        if codes & short:
+            return True
+        long_ = [n for n in self.location_keywords if len(n) > 2]
+        if not long_:
+            return False
+        haystacks: list[str | None] = [
+            record.locationRaw,
+            record.city,
+            record.region,
+            record.country,
+            record.countryCode,
+        ]
+        for loc in record.locations:
+            haystacks += [loc.raw, loc.city, loc.region, loc.country, loc.countryCode]
+        return _contains_any(haystacks, long_)
+
     def keep(self, record: JobRecord) -> bool:
         """True when the job survives every filter. Order follows §4.1's descriptions."""
         title = record.title or ""
@@ -122,18 +174,8 @@ class Filters:
         if self.exclude_title_keywords and _contains_any([title], self.exclude_title_keywords):
             return False
 
-        if self.location_keywords:
-            haystacks: list[str | None] = [
-                record.locationRaw,
-                record.city,
-                record.region,
-                record.country,
-                record.countryCode,
-            ]
-            for loc in record.locations:
-                haystacks += [loc.raw, loc.city, loc.region, loc.country, loc.countryCode]
-            if not _contains_any(haystacks, self.location_keywords):
-                return False
+        if self.location_keywords and not self._location_matches(record):
+            return False
 
         # "Jobs with unknown remote status are dropped" (§4.1) — remote is a tri-state.
         if self.remote_only and record.remote is not True:

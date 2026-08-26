@@ -28,7 +28,7 @@ Rows you are **not** charged for: company summaries, error rows, jobs removed by
 
 ## How to use the Greenhouse, Lever and Ashby job APIs in one run
 
-1. **Paste your companies.** One per line, in any of these forms: a career-site URL (`https://job-boards.greenhouse.io/anthropic`), a prefixed slug (`lever:palantir`, `ashby:openai`, `personio:personio`), or a bare slug resolved through the built-in ATS directory.
+1. **Paste your companies.** One per line, in any of these forms: a career-site URL (`https://job-boards.greenhouse.io/anthropic`), a prefixed slug (`lever:palantir`, `ashby:openai`, `personio:personio`), A bare slug or company name on its own is not enough yet \u2014 give it a prefix or a URL. Directory mode, which resolves a bare company name, ships in the next release.
 2. **Set your filters.** Title keywords, excluded titles, location, remote-only, departments, employment types, posted-after. They all run locally on the fetched JSON, before billing.
 3. **Run it, or schedule it.** For monitoring, turn on `onlyNewJobs` and give the task its own `stateKey`; the first run stores the baseline and later runs return only what is new.
 
@@ -257,9 +257,9 @@ Per-ATS listings with the same engine and the same schema — Greenhouse jobs, L
 
 **How fresh is the data?** It is fetched live at run time. There is no index and no cache between you and the board.
 
-**How do I get the company list?** Paste career-site URLs you already have, use prefixed slugs, or open an issue on the repo to add a company to the public ATS directory.
+**How do I get the company list?** Paste career-site URLs you already have, or use prefixed slugs. You can also open an issue on the repo to add a company to the public ATS directory that directory mode will use.
 
-**Company not found?** Check the slug casing on Lever, and confirm the board is really hosted by that ATS. Then open an issue or a PR against the directory repo.
+**Company not found?** Every entry needs a prefix (`lever:palantir`) or a career-site URL \u2014 a bare company name does not resolve until directory mode ships. If a prefixed slug still fails, check the slug casing on Lever and confirm the board is really hosted by that ATS.
 
 **Why is `remote` null?** Because nothing said otherwise. See Filters, deduplication and normalization.
 

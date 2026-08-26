@@ -30,9 +30,23 @@ _EMAIL = re.compile(
     re.X,
 )
 
+#: The ``00`` international prefix carries a tighter lookbehind than ``+``: with the
+#: shared ``(?<![\w.])`` it started inside a thousands group, so Crusoe's live line
+#: "paid in the range of up to $215,000 - 260.000 + Bonus" matched from the ``00`` of
+#: ``215,000`` through ``260.000`` and shipped "$215,[redacted] + Bonus" — the ad body
+#: corrupted and, because redaction runs *before* §4.5.3 step 2, the pay range destroyed
+#: with it. A ``+`` still redacts wherever it appears, which is where real numbers live.
+#: The national trunk form is the *reason* `redactContacts` defaults to on. §5.6 and §5.8
+#: name German- and Dutch-language SME ads as the target population, and those ads write
+#: "Tel. 030 / 12 34 56 78", never "+49 30 …" — so the two international branches missed
+#: every number the §15.5 Art. 6(1)(f) balance test rests on this regex catching (V1 H1).
+#: The leading `0` plus the currency/comma lookbehind keeps it off salary and year ranges,
+#: and `_MIN_PHONE_DIGITS` suppresses the short false positives that remain.
 _PHONE = re.compile(
     r"""
-      (?<![\w.])(?:\+|00)\d[\d\s().\-/]{6,}\d            # international: +49 30 1234567
+      (?<![\w.])\+\d[\d\s().\-/]{6,}\d                   # international: +49 30 1234567
+    | (?<![\w.,])00\d[\d\s().\-/]{6,}\d                  # international: 0049 30 1234567
+    | (?<![\w.$€£₹¥,])0\d{1,4}[\s./\-]{1,3}\d[\d\s().\-/]{4,}\d(?![\d\w])  # 030 / 12 34 56 78
     | (?<![\w.$€£₹¥,])\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}(?![\d\w])   # NANP: (555) 123-4567
     """,
     re.X,

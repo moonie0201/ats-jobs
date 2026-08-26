@@ -129,3 +129,55 @@ def test_unreadable_posted_after_warns_instead_of_dropping_rows():
 def test_naive_posted_at_is_treated_as_utc():
     filters = Filters.from_input({"postedAfter": "2026-08-01"}, now=NOW)
     assert filters.keep(job(postedAt="2026-08-19"))
+
+
+# --- V1 M2: a two-letter keyword is a country code, not a substring -------------------
+
+
+@pytest.mark.parametrize(
+    ("keyword", "location", "code"),
+    [("US", "Toulouse, France", "FR"), ("DE", "Stockholm, Sweden", "SE")],
+)
+def test_a_two_letter_keyword_does_not_match_inside_a_word(keyword, location, code):
+    """V1 M2: `US` matched inside `touloUSe` and `DE` inside `sweDEn`, and the schema
+    recommended `DE` verbatim as its own example. This filter runs *before* billing, so
+    every false positive was a charged row the buyer did not ask for."""
+    filters = Filters.from_input({"locationKeywords": [keyword]})
+    assert not filters.keep(job(locationRaw=location, city=location, countryCode=code))
+
+
+def test_a_two_letter_keyword_still_matches_the_country_code():
+    filters = Filters.from_input({"locationKeywords": ["DE"]})
+    assert filters.keep(job(locationRaw="Berlin", city="Berlin", countryCode="DE"))
+    assert filters.keep(
+        job(locationRaw="Remote", locations=[Location(raw="Munich", countryCode="DE")])
+    )
+
+
+def test_longer_keywords_keep_their_substring_behaviour():
+    filters = Filters.from_input({"locationKeywords": ["Berlin", "EMEA"]})
+    assert filters.keep(job(locationRaw="Berlin, Germany"))
+    assert filters.keep(job(locationRaw="EMEA - remote"))
+    assert not filters.keep(job(locationRaw="Toulouse, France"))
+
+
+# --- V3 S21: an unbounded relative cutoff used to fail the whole run -------------------
+
+
+@pytest.mark.parametrize(
+    "value", ["99999999999999999999 years", "10000 years", "1000000000 days", "10000000000 days"]
+)
+def test_a_huge_relative_posted_after_does_not_overflow(value: str):
+    """V3 S21: `timedelta * amount` and `now - delta` are two separate overflow points, so
+    clamping the amount does not cover it. `Filters.from_input` runs outside every `try` in
+    `src/main.py`, before a company is resolved — an exception there exits the run FAILED
+    with a raw traceback and no error row at all."""
+    cutoff = parse_posted_after(value, now=NOW)
+    assert cutoff is not None
+    assert cutoff.year == 1970, "a cutoff older than any posting is the same as no cutoff"
+    assert Filters.from_input({"postedAfter": value}).posted_after is not None
+
+
+def test_ordinary_relative_cutoffs_are_unchanged():
+    assert parse_posted_after("7 days", now=NOW) == datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    assert parse_posted_after("1 month", now=NOW) == datetime(2026, 7, 27, 12, 0, tzinfo=UTC)

@@ -18,19 +18,31 @@ from types import ModuleType
 
 from core.models import PROVIDERS
 
-__all__ = ["PROVIDERS", "AdapterNotFound", "get_adapter"]
+__all__ = ["DISABLED", "PROVIDERS", "AdapterNotFound", "get_adapter"]
 
 
 class AdapterNotFound(LookupError):
     """Raised when a provider has no importable adapter module in this build."""
 
 
+#: §14.3 step 2 / §15.1 policy 4 — the takedown switch. Add a provider name here and
+#: collection stops on the next run: `process_company` already turns `AdapterNotFound`
+#: into a free `provider_unavailable` error row, so the run still succeeds and still bills
+#: nothing for it. Honouring a takedown inside the 48 hours §15.1 promises otherwise meant
+#: deleting a module and rebuilding, which is not a thing anyone does under time pressure
+#: (V1 M6). Kept as a constant rather than an input: this is our policy lever, not the
+#: buyer's.
+DISABLED: frozenset[str] = frozenset()
+
+
 def get_adapter(name: str) -> ModuleType:
     """Return the adapter module for ``name`` (``"greenhouse"`` -> ``core.providers.greenhouse``).
 
-    Raises :class:`AdapterNotFound` for an unknown provider and for a known provider
-    whose module is missing or fails to import.
+    Raises :class:`AdapterNotFound` for an unknown provider, for one disabled by
+    :data:`DISABLED`, and for a known provider whose module is missing or fails to import.
     """
+    if name in DISABLED:
+        raise AdapterNotFound(f"provider {name!r} is disabled pending review")
     if name not in PROVIDERS:
         raise AdapterNotFound(f"unknown provider {name!r}; supported: {', '.join(PROVIDERS)}")
     try:

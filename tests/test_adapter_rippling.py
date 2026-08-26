@@ -25,6 +25,7 @@ import pytest
 
 from core.http import HttpError, NotFound, ParseError, make_client
 from core.models import Ref
+from core.normalize.html import sanitize_html
 from core.providers import get_adapter
 from core.providers import rippling as adapter
 
@@ -316,8 +317,11 @@ async def test_description_concatenates_the_detail_sections(fixture):
     sections = details[records[0].sourceId]["description"]
     assert list(sections) == ["company", "role"]
     assert records[0].descriptionHtml is not None
+    # Compared after `sanitize_html`, because that is what the buyer receives: this live
+    # fixture's ad body carries a stray `<meta>` tag, which V3 S23 strips along with the
+    # rest of the non-content markup. The prose either side of it must survive intact.
     for html in sections.values():
-        assert html in records[0].descriptionHtml
+        assert sanitize_html(html) in records[0].descriptionHtml
     assert len(records[0].descriptionText) > 1000
 
 

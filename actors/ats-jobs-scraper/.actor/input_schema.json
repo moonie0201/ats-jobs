@@ -8,7 +8,7 @@
       "title": "Companies (slugs or career-site URLs)",
       "type": "array",
       "editor": "stringList",
-      "description": "One per line. Accepts a career-site URL (https://job-boards.greenhouse.io/anthropic), a prefixed slug (lever:palantir, ashby:openai), or a bare slug/company name resolved via the built-in ATS directory.",
+      "description": "One per line. Accepts a career-site URL (https://job-boards.greenhouse.io/anthropic), a prefixed slug (lever:palantir, ashby:openai), A bare slug or company name needs a prefix or a URL too \u2014 the ATS directory that would resolve one ships in a later release.",
       "prefill": [
         "https://job-boards.greenhouse.io/anthropic",
         "lever:palantir",
@@ -71,7 +71,7 @@
       "title": "Location must contain any of",
       "type": "array",
       "editor": "stringList",
-      "description": "Case-insensitive substring match on the raw location text and on the parsed city, region and country. Example: Berlin, Germany, DE, EMEA.",
+      "description": "Case-insensitive substring match on the raw location text and on the parsed city, region and country. A two-letter entry is matched exactly against the country code instead, so it cannot hit inside a word. Example: Berlin, Germany, EMEA.",
       "default": []
     },
     "remoteOnly": {
@@ -119,7 +119,7 @@
       "title": "Include job description",
       "type": "boolean",
       "editor": "checkbox",
-      "description": "Include the full job ad body. Makes items 10x larger. Email addresses and phone numbers are stripped unless you turn redactContacts off.",
+      "description": "Include the full job ad body. Makes items 10x larger. Email addresses and phone numbers are stripped unless you turn redactContacts off. Executable markup (`<script>`, `<iframe>`, `on*=` handlers, `javascript:` URLs) is removed; the remaining HTML is the employer's own and should still be rendered in a sandboxed context.",
       "sectionCaption": "Output",
       "default": false
     },

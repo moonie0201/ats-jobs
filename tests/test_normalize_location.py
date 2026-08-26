@@ -233,3 +233,22 @@ def test_a_primary_that_names_a_place_is_never_overwritten():
 def test_nothing_to_promote_leaves_the_primary_null():
     primary, _ = parse_locations("Remote", ["Distributed"])
     assert (primary.raw, primary.city, primary.countryCode) == ("Remote", None, None)
+
+
+def test_country_first_comma_order_resolves_the_country():
+    """Agile Robots writes its Personio office as "Germany, Munich (HQ)" on every job;
+    right-to-left alone left `countryCode` null and swept "Germany" into `city`."""
+    primary, _ = parse_locations("Germany, Munich (HQ)")
+    assert (primary.city, primary.country, primary.countryCode) == ("Munich (HQ)", "Germany", "DE")
+    assert primary.raw == "Germany, Munich (HQ)"
+
+
+def test_country_first_order_does_not_outrank_a_trailing_subdivision():
+    """ "Georgia" is both a country and a US state; "Atlanta, Georgia" stays American."""
+    primary, _ = parse_locations("Atlanta, Georgia")
+    assert (primary.city, primary.region, primary.countryCode) == ("Atlanta", "Georgia", "US")
+
+
+def test_a_lone_country_is_still_a_country_and_not_a_city():
+    primary, _ = parse_locations("Germany")
+    assert (primary.city, primary.countryCode) == (None, "DE")

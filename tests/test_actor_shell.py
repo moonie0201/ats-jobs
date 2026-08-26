@@ -21,6 +21,7 @@ ACTOR = ROOT / "actors" / "ats-jobs-scraper"
 sys.path.append(str(ACTOR))
 
 from src.main import (  # noqa: E402
+    NUMERIC_BOUNDS,
     RunCtx,
     dedupe,
     error_item,
@@ -33,6 +34,7 @@ from src.main import (  # noqa: E402
 
 from core.models import JobRecord, Ref  # noqa: E402
 from core.providers import AdapterNotFound, get_adapter  # noqa: E402
+from core.state import SeenState  # noqa: E402
 
 DATASET_FIELDS = set(
     json.loads((ACTOR / ".actor" / "dataset_schema.json").read_text(encoding="utf-8"))["fields"][
@@ -132,3 +134,66 @@ def test_free_rows_only_use_declared_dataset_fields():
 def test_missing_adapter_raises_a_typed_error():
     with pytest.raises(AdapterNotFound):
         get_adapter("smartrecruiters")
+
+
+# --- V1 H2/H3/H4 + V3 S22: the numeric knobs an API caller reaches unfiltered ----------
+
+
+@pytest.mark.parametrize("bad", ["lots", "1e9", "0x10", -5, 10**9, 10**400, 30.0, "30", {"x": 1}])
+def test_numeric_input_never_raises_and_never_leaves_the_schema_bounds(bad):
+    """V3 S22: the schema's `minimum`/`maximum` bind the Console form only — API, CLI and
+    `call-actor` callers reach `Actor.get_input()` without it. `companies.maxItems` already
+    had `MAX_COMPANIES` for exactly this reason; the five knobs beside it were undefended,
+    and `int("lots")` failed the run before a company was resolved."""
+    cfg = read_config(dict.fromkeys(NUMERIC_BOUNDS, bad))
+    for key, (low, high) in NUMERIC_BOUNDS.items():
+        assert isinstance(cfg[key], int) and low <= cfg[key] <= high, key
+
+
+def test_a_negative_retention_cannot_wipe_the_delta_baseline():
+    """V1 H2: `prune(-1)` put the cutoff a day in the *future*, so every id was stale and
+    `save()` persisted the empty dict — the next run saw no baseline, called every job new
+    and charged $0.002 apiece."""
+    assert read_config({"stateRetentionDays": -1})["stateRetentionDays"] == 0
+    state = SeenState()
+    state.mark("a")
+    state.mark("b")
+    assert state.prune(-1) == 0 and len(state.seen) == 2
+    assert state.prune(10**9) == 0, "V3 S21: a huge retention used to overflow timedelta"
+
+
+def test_a_negative_per_company_cap_cannot_silently_drop_rows():
+    """V1 H3: `-5` is truthy, so `emit[: cfg["maxJobsPerCompany"]]` became `emit[:-5]` and
+    discarded the last five rows the buyer asked for, while the summary still reported
+    them as kept."""
+    assert read_config({"maxJobsPerCompany": -5})["maxJobsPerCompany"] == 0
+
+
+def test_a_zero_timeout_cannot_fail_every_request():
+    """V1 H4: `httpx.Timeout(0.0)` sets connect/read/write/pool to zero, so every fetch
+    raised instantly, every company became a free `timeout` row, and the run still exited
+    SUCCEEDED with zero jobs."""
+    assert read_config({"requestTimeoutSecs": 0})["requestTimeoutSecs"] == 5
+
+
+def test_a_non_list_companies_value_is_no_companies():
+    """V3 S30: a dict iterated as its *keys* — an input shape nobody meant to support."""
+    assert read_companies({"companies": {"a": 1}}) == []
+    assert read_companies({"companies": "lever:palantir"}) == ["lever:palantir"]
+
+
+# --- V1 M6: the takedown switch §14.3 already documents -------------------------------
+
+
+def test_a_disabled_provider_becomes_a_free_error_row_not_a_crash(monkeypatch):
+    """V1 M6: §14.3 step 2 specifies the runbook — "set the adapter's status to degraded;
+    the Actor then emits `error` rows with `provider_unavailable`, still succeeds, and
+    still bills nothing for it". No such switch existed, so honouring a takedown inside the
+    48 hours §15.1 policy 4 promises meant deleting a module and rebuilding."""
+    import core.providers as providers
+
+    assert providers.DISABLED == frozenset(), "nothing is disabled in a normal build"
+    monkeypatch.setattr(providers, "DISABLED", frozenset({"lever"}))
+    with pytest.raises(AdapterNotFound):
+        get_adapter("lever")
+    assert get_adapter("greenhouse") is not None, "the other five keep working"

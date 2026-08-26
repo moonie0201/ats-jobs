@@ -199,3 +199,38 @@ def test_backoff_is_one_two_four_with_jitter():
         for _ in range(50):
             delay = backoff_delay(attempt)
             assert 0.75 * base <= delay <= 1.25 * base
+
+
+# --- V3 S26: a deterministic parse failure must not be re-fetched ---------------------
+
+
+@respx.mock
+async def test_a_deterministic_parse_error_is_not_retried(client):
+    """V3 S26: `get_json` caught bare `Exception` around `parse`, so the typed `ParseError`
+    a parser raises to say "well-formed body, this is not a jobs feed" triggered a full
+    retry — a second round trip, a second rate-limit token and a second backoff sleep for a
+    guaranteed identical answer, on every `parse_error` company."""
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+    route = respx.get(url).mock(return_value=httpx.Response(200, content=b"<html>nope</html>"))
+
+    def parse(_response):
+        raise ParseError("not a jobs feed")
+
+    with pytest.raises(ParseError):
+        await client.get_json(url, parse=parse)
+    assert route.call_count == 1, "asking again cannot change the answer"
+
+
+@respx.mock
+async def test_a_damaged_body_still_earns_its_soft_retry(client):
+    """§5.12 grants one retry to a *malformed* body — a parser marks that case explicitly
+    so S26's fix cannot quietly delete the retry rule it was scoped around."""
+    url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+    route = respx.get(url).mock(return_value=httpx.Response(200, content=b"{truncated"))
+
+    def parse(_response):
+        raise ParseError("truncated", retryable=True)
+
+    with pytest.raises(ParseError):
+        await client.get_json(url, parse=parse)
+    assert route.call_count == 2

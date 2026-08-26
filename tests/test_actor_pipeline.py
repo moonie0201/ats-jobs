@@ -242,8 +242,11 @@ async def test_content_dedupe_records_the_merge_across_companies(monkeypatch):
     await shell.process_company(Ref(provider="lever", slug="two"), None, ctx)
 
     assert [item["id"] for item in actor.charged_rows] == ["a"]
-    survivor = ctx.content_survivors["k"]
-    assert survivor.dedupedFrom == ["b"], "§4.5.6 correction 2 is unconditional"
+    # V3 S24: the map holds the survivor's `dedupedFrom` list, not the whole JobRecord —
+    # holding the record retained every delivered row (description and `raw` included) for
+    # the life of the run. The merge it records is unchanged (§4.5.6 correction 2).
+    assert ctx.content_survivors["k"] == ["b"], "§4.5.6 correction 2 is unconditional"
+    assert not any(hasattr(v, "dedupedFrom") for v in ctx.content_survivors.values())
     assert ctx.summaries[1][1]["duplicatesDropped"] == 1
 
 
@@ -361,3 +364,49 @@ async def test_the_directory_is_not_loaded_when_nothing_needs_it(monkeypatch):
     monkeypatch.setattr(shell, "get_directory", lambda *a, **k: calls.append(a) or _ready(None))
     await shell.resolve_all(["greenhouse:acme"], object(), ctx_for(FakeActor()))
     assert calls == [], "§6.6: a run made of prefixes never downloads the directory"
+
+
+# --- V1 M1: a missing baseline must cost nothing, not full price ----------------------
+
+
+async def test_onlynewjobs_without_a_state_store_delivers_nothing_and_charges_nothing(
+    monkeypatch,
+):
+    """V1 M1: `open_state` swallows every exception and lets the run continue, and
+    `apply_delta` with `state is None` returns **all** records — so a 2,000-company
+    monitoring run that expected 40 charged rows charged up to `maxJobs`, the 1,000
+    default, 25x the expected bill, for data the buyer already has. The degrade-never-fail
+    posture is right everywhere else in this shell; here it degraded towards the money."""
+    actor = FakeActor()
+    ctx = ctx_for(actor, onlyNewJobs=True)
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("invalid store name")
+
+    monkeypatch.setattr(shell.SeenState, "open", boom)
+    await shell.open_state(ctx)
+    if ctx.state is None:
+        ctx.billing.budget_exhausted = True
+
+    install(monkeypatch, FakeAdapter([record("a"), record("b")]))
+    await shell.process_company(Ref(provider="greenhouse", slug="one"), None, ctx)
+
+    assert actor.charged_rows == [], "no baseline means no delivery, and no charge"
+    assert ctx.billing.stop_status == "budget_exhausted"
+    assert ctx.summaries[0][1]["status"] == "budget_exhausted"
+
+
+# --- V1 L5: `delta-run` is the sole kill criterion for the P2 thesis ------------------
+
+
+async def test_delta_run_is_charged_even_when_nothing_resolves():
+    """V1 L5: the event fired after `resolve_all` and behind the `if not refs: return`
+    guard, so a run whose entries all failed to resolve was never counted. §14.4 makes the
+    `delta-run` count the *sole measurable* kill criterion for the P2 thesis — under-counting
+    biases the one number that decision rests on."""
+    actor = FakeActor()
+    ctx = ctx_for(actor, onlyNewJobs=True)
+    await ctx.billing.charge_delta_run()
+    assert actor.charges == ["delta-run"]
+    await ctx.billing.charge_delta_run()
+    assert actor.charges == ["delta-run"], "once per run, never twice"

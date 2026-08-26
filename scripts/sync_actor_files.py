@@ -63,6 +63,12 @@ def clean(actor_dir: Path) -> list[Path]:
     if target_core.exists():
         shutil.rmtree(target_core)
         removed.append(target_core)
+    # V1 L12: `sync` writes this too, so `--clean` has to take it back — otherwise the
+    # docstring above is false and the tree is not returned to its pre-sync state.
+    target_requirements = actor_dir / "requirements.txt"
+    if target_requirements.exists():
+        target_requirements.unlink()
+        removed.append(target_requirements)
     return removed
 
 

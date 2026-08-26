@@ -257,7 +257,9 @@ def test_empty_objects_yield_nulls_not_exceptions(offer: dict[str, Any]):
 
     assert job.recordType == "job"
     assert job.provider == "recruitee" and job.companySlug == "acme"
-    assert job.id == "recruitee:acme:"
+    # V1 L10: no sourceId means no id, so `dedupe` keeps the row instead of
+    # collapsing every id-less job on the board onto one shared key.
+    assert job.id == ""
     for field in (
         "title",
         "company",

@@ -35,6 +35,10 @@ ACTORS_DIR = ROOT / "actors"
 
 MAX_INPUT_SCHEMA_BYTES = 500_000
 MAX_DESCRIPTION_CHARS = 500
+#: §4.1: "enum lists short (MCP combines enums to <=2000 chars)". The combined budget is
+#: what MCP actually spends, so summing every enum in the document is the check, not
+#: capping each one on its own (V1 L11).
+MAX_COMBINED_ENUM_CHARS = 2000
 BANNED = re.compile(r"\bofficial\b", re.IGNORECASE)
 # Fields a buyer or a search engine sees as the product's own name.
 SEO_KEYS = frozenset({"title", "name", "enumTitles", "sectionCaption", "label", "buildTag"})
@@ -86,6 +90,16 @@ def check_field_docs(
             )
 
 
+def _enums(node: Any) -> list[list[Any]]:
+    """Every `enum` list in the document, at any depth."""
+    if isinstance(node, dict):
+        found = [node["enum"]] if isinstance(node.get("enum"), list) else []
+        return found + [e for value in node.values() for e in _enums(value)]
+    if isinstance(node, list):
+        return [e for item in node for e in _enums(item)]
+    return []
+
+
 def check_input_schema(path: Path, doc: dict[str, Any], errors: list[str]) -> list[str]:
     """Returns the provider enum so the caller can compare it against the other files."""
     label = path.name
@@ -95,6 +109,13 @@ def check_input_schema(path: Path, doc: dict[str, Any], errors: list[str]) -> li
 
     properties = doc.get("properties", {})
     check_field_docs(properties, label, errors)
+
+    enum_chars = sum(len(json.dumps(enum)) for enum in _enums(doc))
+    if enum_chars >= MAX_COMBINED_ENUM_CHARS:
+        errors.append(
+            f"{label}: enum lists total {enum_chars} chars, must stay under "
+            f"{MAX_COMBINED_ENUM_CHARS} (MCP combines them)"
+        )
 
     for name in doc.get("required", []):
         if name not in properties:

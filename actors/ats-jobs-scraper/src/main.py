@@ -108,13 +108,49 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+#: `(minimum, maximum)` from `.actor/input_schema.json`, restated in code for the callers
+#: that reach `Actor.get_input()` without ever passing the Console form — API, CLI and
+#: `call-actor` (V1 L4, V3 S22). `companies.maxItems` already has `MAX_COMPANIES` for
+#: exactly this reason; these five knobs sat beside it undefended, and every one of them
+#: was reachable:
+#:
+#: * `stateRetentionDays: -1` put the prune cutoff a day in the future, wiped the delta
+#:   baseline and re-charged every job on the next run (V1 H2).
+#: * `maxJobsPerCompany: -5` is truthy, so `emit[:-5]` silently dropped the last five rows
+#:   of every company while the summary still reported them as kept (V1 H3).
+#: * `requestTimeoutSecs: 0` failed every request, and the run still exited SUCCEEDED with
+#:   zero jobs and nothing to distinguish it from an empty input (V1 H4).
+#: * `maxConcurrency: "lots"` raised `ValueError` out of `read_config` and failed the run.
+NUMERIC_BOUNDS: dict[str, tuple[int, int]] = {
+    "maxJobs": (0, 200_000),
+    "maxJobsPerCompany": (0, 20_000),
+    "maxConcurrency": (1, 32),
+    "requestTimeoutSecs": (5, 120),
+    "stateRetentionDays": (0, 730),
+}
+
+
+def _bounded(key: str, value: Any) -> int:
+    """One numeric knob, coerced into its schema bounds. Never raises."""
+    low, high = NUMERIC_BOUNDS[key]
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is not optional here: `json.loads` accepts the non-standard
+        # literal `Infinity`, so `{"maxJobs": Infinity}` arrives as `float("inf")` and
+        # `int()` raises on it — the same class of bug as the `postedAfter` overflow.
+        number = int(DEFAULTS[key])
+    return min(high, max(low, number))
+
+
 def read_config(raw: dict[str, Any]) -> dict[str, Any]:
     """Apply defaults without letting a meaningful falsy value (`maxJobs: 0`) be lost."""
     cfg = {
         key: (raw[key] if raw.get(key) is not None else value) for key, value in DEFAULTS.items()
     }
     cfg["providers"] = [p for p in cfg["providers"] if p in PROVIDERS] or list(PROVIDERS)
-    cfg["maxConcurrency"] = max(1, int(cfg["maxConcurrency"]))
+    for key in NUMERIC_BOUNDS:
+        cfg[key] = _bounded(key, cfg[key])
     return cfg
 
 
@@ -123,8 +159,11 @@ def read_companies(raw: dict[str, Any]) -> list[str]:
     values = raw.get("companies") or next(
         (raw[alias] for alias in INPUT_ALIASES if raw.get(alias)), []
     )
-    if isinstance(values, str):
-        values = [values]
+    # A `dict` used to iterate as its *keys* — an input shape nobody intended to support
+    # and nobody meant to document (V3 S30). Anything that is not a list or a bare string
+    # is no companies at all, which `main()` already reports as `no_companies`.
+    if not isinstance(values, list):
+        values = [values] if isinstance(values, str) else []
     out: list[str] = []
     for value in values:
         if isinstance(value, dict):  # `startUrls` arrive as [{"url": ...}]
@@ -259,10 +298,16 @@ class RunCtx:
     company_state: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     seen_ids: set[str] = field(default_factory=set)
-    #: contentKey -> the row that survived it, run-wide. A per-company map recorded
-    #: `dedupedFrom` inside a company but dropped a cross-company collision with no
-    #: trace at all (§4.5.6 correction 2, V1 M6).
-    content_survivors: dict[str, Any] = field(default_factory=dict)
+    #: contentKey -> the surviving row's `dedupedFrom` list, run-wide. A per-company map
+    #: recorded `dedupedFrom` inside a company but dropped a cross-company collision with
+    #: no trace at all (§4.5.6 correction 2, V1 M6) — so the map has to outlive the
+    #: company. Holding the whole `JobRecord` in it, though, retained every delivered row
+    #: for the life of the run: description, `raw` payload and all, at `maxJobs: 200000`
+    #: with `includeRawJson` that is ~800 MB against `maxMemoryMbytes: 1024`, and the run
+    #: dies after the buyer has been charged for most of it (V3 S24). Only `dedupedFrom` is
+    #: ever mutated through this map, so the list is all it needs to hold: the record then
+    #: owns its own list and is free the moment `push_jobs` returns.
+    content_survivors: dict[str, list[str]] = field(default_factory=dict)
     summaries: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     companies_seen: Counter = field(default_factory=Counter)
     companies_zero: Counter = field(default_factory=Counter)
@@ -298,10 +343,13 @@ def dedupe(ctx: RunCtx, records: list[Any]) -> tuple[list[Any], int]:
                 # The survivor may already have been pushed, in which case the merge is
                 # only visible in `duplicatesDropped` on the summary — documented in
                 # `dataset_schema.json` -> `dedupedFrom` (V1 M6).
-                survivor.dedupedFrom = (survivor.dedupedFrom or []) + [record.id or ""]
+                survivor.append(record.id or "")
                 dropped += 1
                 continue
-            ctx.content_survivors[record.contentKey] = record
+            # The record owns the list; the map only borrows it (V3 S24). `to_item()`
+            # normalises an empty list back to None, so emitted rows are unchanged.
+            record.dedupedFrom = record.dedupedFrom or []
+            ctx.content_survivors[record.contentKey] = record.dedupedFrom
         kept.append(record)
     return kept, dropped
 
@@ -578,7 +626,7 @@ async def open_state(ctx: RunCtx) -> None:
 async def save_state(ctx: RunCtx) -> None:
     if ctx.state is None or ctx.store is None:
         return
-    pruned = ctx.state.prune(int(ctx.cfg["stateRetentionDays"]))
+    pruned = ctx.state.prune(ctx.cfg["stateRetentionDays"])
     await ctx.state.save()
     await ctx.store.set_value(COMPANY_STATE_KEY, ctx.company_state)
     Actor.log.info(
@@ -595,7 +643,7 @@ async def main() -> None:
         ctx = RunCtx(
             cfg=cfg,
             filters=Filters.from_input(cfg),
-            billing=Billing(max_jobs=int(cfg["maxJobs"] or 0)),
+            billing=Billing(max_jobs=cfg["maxJobs"]),
         )
 
         Actor.log.info(
@@ -631,7 +679,15 @@ async def main() -> None:
         Actor.on(Event.ABORTING, on_abort)
         Actor.on(Event.MIGRATING, on_abort)
 
-        async with make_client(timeout_secs=float(cfg["requestTimeoutSecs"])) as client:
+        async with make_client(timeout_secs=cfg["requestTimeoutSecs"]) as client:
+            if cfg["onlyNewJobs"]:
+                # §8.2: instrumentation only, $0.00, once per run, never otherwise — and
+                # above the `if not refs` guard, because §14.4 makes the `delta-run` count
+                # the sole measurable kill criterion for the P2 thesis. Charging it only
+                # when something resolved under-counts the one number that decision rests
+                # on (V1 L5).
+                await ctx.billing.charge_delta_run()
+
             refs = await resolve_all(entries, client, ctx)
             if not refs:
                 Actor.log.warning("nothing resolved", extra={"entries": len(entries)})
@@ -640,9 +696,20 @@ async def main() -> None:
                 return
 
             if cfg["onlyNewJobs"]:
-                # §8.2: instrumentation only, $0.00, once per run, never otherwise.
-                await ctx.billing.charge_delta_run()
                 await open_state(ctx)
+                if ctx.state is None:
+                    # `apply_delta` with no state returns *all* records, so a monitoring
+                    # run that expected 40 charged rows would charge up to `maxJobs` — the
+                    # 1,000 default, 25x the expected bill — for data the buyer already
+                    # has. The degrade-never-fail posture is right everywhere else in this
+                    # shell; here it degraded in the direction that costs money (V1 M1).
+                    # Stopping billing makes every company emit the free summary §5.12
+                    # already defines for "stopped before delivering".
+                    ctx.billing.budget_exhausted = True
+                    Actor.log.error(
+                        "onlyNewJobs requested but the state store is unavailable; "
+                        "delivering nothing rather than re-charging the whole baseline"
+                    )
 
             queue: asyncio.Queue[Ref] = asyncio.Queue()
             for ref in refs:

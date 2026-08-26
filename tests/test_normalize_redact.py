@@ -6,6 +6,8 @@ normalizer test sits under one ``tests/test_normalize_*.py`` glob.)
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from core.models import Ref
@@ -136,3 +138,54 @@ def test_a_bare_domain_is_not_an_address_and_the_word_before_it_survives():
     body = "Communications come from an @cohere.com or @cw.cohere email alias."
     text, hit = redact_text(body)
     assert (text, hit) == (body, False)
+
+
+def test_a_thousands_group_is_not_an_international_dialling_prefix():
+    """Crusoe's live compensation line: the `00` of "215,000" opened an international
+    phone match that ran to "260.000", eating the pay range redaction runs ahead of."""
+    body = "Compensation will be paid in the range of up to $215,000 - 260.000 + Bonus."
+    assert redact_text(body) == (body, False)
+
+
+def test_a_real_number_written_with_the_00_prefix_still_redacts():
+    text, hit = redact_text("Call 0049 30 1234567 for details")
+    assert hit and "0049" not in text
+
+
+# --- V1 H1: national-format European phone numbers ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Rufen Sie uns an: 030 / 12 34 56 78",
+        "Contact: 0721 9876543",
+        "Bei Fragen: 0511-123456",
+        "Tel: 040 123 456 78",
+        "Bel ons op 020 123 4567",
+    ],
+)
+def test_a_national_trunk_number_is_redacted(text: str):
+    """V1 H1: `_PHONE` had only the `+`/`00` and NANP forms, so it missed the exact
+    population §5.6/§5.8 name as the reason `redactContacts` defaults to on — German and
+    Dutch SME ads write the trunk form, never `+49`."""
+    redacted, hit = redact_text(text)
+    assert hit and "[redacted]" in redacted
+    assert not re.search(r"\d{5}", redacted), redacted
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "paid in the range of up to $215,000 - 260.000 + Bonus.",
+        "EUR 90.000 - 110.000 brutto pro Jahr",
+        "Salary 180000 - 220000 EUR",
+        "Between 2019 and 2024 we grew",
+        "a team of 0 - 5 engineers",
+        "a ratio of 0.5 - 1.5 million",
+    ],
+)
+def test_the_trunk_pattern_does_not_eat_money_or_years(text: str):
+    """The leading `0` and the currency/comma lookbehind are what keep V1 H1's new branch
+    off the salary ranges V2 BUG-4 already showed this module can destroy."""
+    assert redact_text(text) == (text, False)

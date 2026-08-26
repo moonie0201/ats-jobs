@@ -270,7 +270,11 @@ EMPTY_OBJECTS_JOB = {
 @pytest.mark.parametrize("job", [EMPTY_OBJECTS_JOB, {}, None, {"departments": None, "offices": {}}])
 def test_empty_objects_yield_all_null_and_never_raise(job):
     row = to_record(job, Ref("greenhouse", "acme"), OPTIONS)
-    assert row.id == "greenhouse:acme:"
+    # V1 L10: a job with no `sourceId` has no id, and `make_id` says so. It used to return
+    # the truthy `"greenhouse:acme:"`, so `dedupe`'s `if record.id:` guard always fired and
+    # every id-less job on a board shared one key — all but the first silently dropped as
+    # duplicates. An id we cannot build is not an id every job shares.
+    assert row.id == ""
     assert row.title is None and row.titleNormalized is None
     assert row.company is None and row.department is None and row.team is None
     assert row.locationRaw is None and row.city is None and row.countryCode is None

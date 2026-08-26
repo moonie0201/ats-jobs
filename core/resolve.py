@@ -22,23 +22,29 @@ KNOWN_PREFIXES: tuple[str, ...] = (*PROVIDERS, "workday")
 
 #: §5.11: every class admits uppercase and is anchored with a lookahead, so a mixed-case
 #: slug either matches whole or fails cleanly. It must never capture a fragment.
-#: Each pattern is anchored to the start of the entry or to a ``//`` authority, so a
-#: career-site host can only be read out of the *host* position: without it
-#: ``https://attacker.example/?x=jobs.lever.co/palantir`` resolved to Lever `palantir`
-#: (V3 S12).
+#:
+#: Anchored at ``\A//`` and matched against a *rebuilt* ``//host/path?query`` rather than
+#: against the raw entry (V3 S25, the residue of V3 S12). The old ``(?:\A|//)`` alternative
+#: existed to let a scheme-less entry (``jobs.lever.co/palantir``) match, but ``//`` was
+#: then accepted anywhere in the string, so a path, query or fragment could fake a host
+#: position: ``https://attacker.example/r?u=//jobs.lever.co/palantir`` resolved to Lever
+#: `palantir`, and ``.../#//bunq.recruitee.com`` to Recruitee `bunq`. No SSRF — the fetch
+#: still goes to the real allowlisted ATS host — but the entry the user reads and the board
+#: they are billed for were different companies. Canonicalising first makes the alternative
+#: unnecessary, which is what lets the anchor actually hold.
 HOST_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
-            r"(?:\A|//)(?:job-boards|boards)\.greenhouse\.io/"
+            r"\A//(?:job-boards|boards)\.greenhouse\.io/"
             r"(?:embed/job_board\?for=)?([A-Za-z0-9_.-]+)(?=[/?#]|$)"
         ),
         "greenhouse",
     ),
-    (re.compile(r"(?:\A|//)jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "lever"),
-    (re.compile(r"(?:\A|//)jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "ashby"),
-    (re.compile(r"(?:\A|//)([A-Za-z0-9-]+)\.recruitee\.com(?=[/?#]|$)"), "recruitee"),
-    (re.compile(r"(?:\A|//)ats\.rippling\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "rippling"),
-    (re.compile(r"(?:\A|//)([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)(?=[/?#]|$)"), "personio"),
+    (re.compile(r"\A//jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "lever"),
+    (re.compile(r"\A//jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "ashby"),
+    (re.compile(r"\A//([A-Za-z0-9-]+)\.recruitee\.com(?=[/?#]|$)"), "recruitee"),
+    (re.compile(r"\A//ats\.rippling\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "rippling"),
+    (re.compile(r"\A//([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)(?=[/?#]|$)"), "personio"),
 )
 
 RESERVED_SLUG = re.compile(r"^(embed|api|www|sitemap|robots|assets|static)$", re.IGNORECASE)
@@ -96,10 +102,27 @@ def parse_prefix(entry: str) -> Ref | None:
 
 
 def parse_url(entry: str) -> Ref | None:
-    """Match the §5.11 host table. Returns None for anything not on it."""
+    """Match the §5.11 host table against the *parsed* URL, never the raw entry (V3 S25).
+
+    Returns None for anything not on the table. ``pattern.match`` rather than ``.search``
+    is half the fix: without it ``http://evil.test/a//jobs.ashbyhq.com/openai`` still slips
+    an authority into the path.
+    """
     text = entry.strip()
+    parts = urlsplit(text if "://" in text else "//" + text)
+    # `netloc`, not `hostname`: Recruitee and Personio carry the slug in the *host*, and
+    # `urlsplit.hostname` lowercases it, which would publish `personio:personio` for
+    # `Personio.jobs.personio.de` — §5.11 and §6.4 keep a slug verbatim as it validated.
+    # Nothing is stripped off the netloc beyond a leading `www.`, so an entry carrying
+    # userinfo or a port simply fails to match the anchored patterns, which is the V3 S1
+    # behaviour we want. The query survives only because Greenhouse's embed form carries
+    # the slug in `?for=`; the fragment is dropped — it is never part of a host.
+    netloc = parts.netloc
+    if netloc[:4].lower() == "www.":
+        netloc = netloc[4:]
+    target = f"//{netloc}{parts.path}" + (f"?{parts.query}" if parts.query else "")
     for pattern, provider in HOST_PATTERNS:
-        match = pattern.search(text)
+        match = pattern.match(target)
         if not match:
             continue
         slug = match.group(1)

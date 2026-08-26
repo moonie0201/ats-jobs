@@ -282,7 +282,9 @@ def test_empty_objects_produce_all_null_and_never_raise():
         # No id means no link: a fabricated `/job/` URL would 404 on the buyer (§5.8).
         assert row.url is None
         assert row.company == "personio"
-        assert row.id == "personio:personio:"
+        # V1 L10: no sourceId means no id, so `dedupe` keeps the row instead of
+        # collapsing every id-less job on the board onto one shared key.
+        assert row.id == ""
 
 
 def test_to_record_survives_an_entirely_absent_position():
@@ -371,3 +373,82 @@ def test_registry_exposes_the_adapter():
     assert module.SPEC is SPEC
     assert module.fetch is fetch
     assert (SPEC.name, SPEC.host_rate_limit, SPEC.needs_detail_call) == ("personio", 2.0, False)
+
+
+#: A board whose own language carries no ad bodies at all. Agile Robots ships exactly
+#: this: 56 of 64 positions with `<jobDescriptions></jobDescriptions>` on the bare URL,
+#: and the same ids full under `?language=en`.
+BODILESS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<workzag-jobs>
+  <position><id>1</id><name>Technician</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions></jobDescriptions></position>
+  <position><id>2</id><name>Engineer</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions></jobDescriptions></position>
+  <position><id>3</id><name>Buyer</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions><jobDescription><name>Aufgaben</name>
+      <value><![CDATA[<p>Einkauf</p>]]></value></jobDescription></jobDescriptions></position>
+</workzag-jobs>
+"""
+
+ENGLISH_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<workzag-jobs>
+  <position><id>1</id><name>Technician</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions><jobDescription><name>Your tasks</name>
+      <value><![CDATA[<p>Assemble robots</p>]]></value></jobDescription>
+    </jobDescriptions></position>
+  <position><id>2</id><name>Engineer</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions></jobDescriptions></position>
+  <position><id>3</id><name>Buyer</name><office>Germany, Munich (HQ)</office>
+    <jobDescriptions><jobDescription><name>Your tasks</name>
+      <value><![CDATA[<p>Purchasing</p>]]></value></jobDescription></jobDescriptions></position>
+</workzag-jobs>
+"""
+
+AGILE_REF = Ref("personio", "agile-robots-se", input="personio:agile-robots-se")
+AGILE_URL = "https://agile-robots-se.jobs.personio.de/xml"
+
+
+def _language_router(bare: str, english: str):
+    """respx side effect that answers by ``?language=``, not by call order."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        wanted = request.url.params.get("language")
+        return httpx.Response(200, text=english if wanted == "en" else bare)
+
+    return handler
+
+
+@respx.mock
+async def test_a_mostly_bodiless_board_is_backfilled_from_english(client: Client):
+    """One extra request, and only the empty positions take the English body: the board's
+    own language wins wherever it has one."""
+    route = respx.get(AGILE_URL).mock(side_effect=_language_router(BODILESS_FEED, ENGLISH_FEED))
+    rows = await fetch(AGILE_REF, client, OPTIONS)
+    bodies = {row.id: row.descriptionText for row in rows}
+    assert bodies["personio:agile-robots-se:1"] == "Your tasks\n\nAssemble robots"
+    assert bodies["personio:agile-robots-se:2"] is None  # empty in both languages
+    assert bodies["personio:agile-robots-se:3"] == "Aufgaben\n\nEinkauf"  # own language kept
+    assert [call.request.url.params.get("language") for call in route.calls] == [None, "en"]
+
+
+@respx.mock
+async def test_a_board_with_bodies_never_spends_the_extra_request(client: Client):
+    route = respx.get(DE_URL).mock(
+        return_value=httpx.Response(200, text=load_fixture("personio", "sample.xml"))
+    )
+    await fetch(SAMPLE_REF, client, OPTIONS)
+    assert len(route.calls) == 1
+
+
+@respx.mock
+async def test_a_failed_backfill_still_delivers_the_company(client: Client):
+    """§5.12: the extra request is an improvement, never a new way to fail."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("language"):
+            return httpx.Response(500)
+        return httpx.Response(200, text=BODILESS_FEED)
+
+    respx.get(AGILE_URL).mock(side_effect=handler)
+    rows = await fetch(AGILE_REF, client, OPTIONS)
+    assert [row.id for row in rows] == [f"personio:agile-robots-se:{n}" for n in (1, 2, 3)]
