@@ -1,0 +1,18 @@
+{
+  "actorSpecification": 1,
+  "name": "ats-history-snapshot",
+  "title": "ATS History Snapshot (internal)",
+  "description": "Private, scheduled: sweeps one shard of the watchlist and writes the daily job-posting snapshot and diff into the named ats-history key-value store (SPEC v2 §7).",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 512,
+  "maxMemoryMbytes": 512,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "defaultRunOptions": {
+    "memoryMbytes": 512,
+    "timeoutSecs": 3600
+  }
+}

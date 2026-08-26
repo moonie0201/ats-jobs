@@ -235,6 +235,9 @@ async def fetch(
         except NotFound as exc:
             missing = exc
             continue
-        positions = await _fill_empty_bodies(client, ref.slug, host, positions)
+        if not (options or {}).get("listOnly"):
+            # A second full-board fetch buys descriptions only. The history snapshot
+            # discards them, so under `listOnly` it was paying double ingress for nothing.
+            positions = await _fill_empty_bodies(client, ref.slug, host, positions)
         return [to_record(position, ref, options, host) for position in positions]
     raise missing or NotFound(f"no Personio board for {ref.slug!r}")

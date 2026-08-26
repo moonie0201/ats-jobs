@@ -8,7 +8,7 @@
       "title": "Companies (slugs or career-site URLs)",
       "type": "array",
       "editor": "stringList",
-      "description": "One per line. Accepts a career-site URL (https://job-boards.greenhouse.io/anthropic), a prefixed slug (lever:palantir, ashby:openai), A bare slug or company name needs a prefix or a URL too \u2014 the ATS directory that would resolve one ships in a later release.",
+      "description": "One per line. Use a career-site URL (https://job-boards.greenhouse.io/anthropic) or a prefixed slug (lever:palantir, ashby:openai, personio:personio). A bare company name does not resolve yet — directory mode ships in the next release.",
       "prefill": [
         "https://job-boards.greenhouse.io/anthropic",
         "lever:palantir",
@@ -26,10 +26,31 @@
       "description": "Only query these providers. Applies to bare slugs and to directory lookups; an explicit provider prefix or URL always wins.",
       "items": {
         "type": "string",
-        "enum": ["greenhouse", "lever", "ashby", "recruitee", "rippling", "personio"],
-        "enumTitles": ["Greenhouse", "Lever", "Ashby", "Recruitee", "Rippling", "Personio"]
+        "enum": [
+          "greenhouse",
+          "lever",
+          "ashby",
+          "recruitee",
+          "rippling",
+          "personio"
+        ],
+        "enumTitles": [
+          "Greenhouse",
+          "Lever",
+          "Ashby",
+          "Recruitee",
+          "Rippling",
+          "Personio"
+        ]
       },
-      "default": ["greenhouse", "lever", "ashby", "recruitee", "rippling", "personio"]
+      "default": [
+        "greenhouse",
+        "lever",
+        "ashby",
+        "recruitee",
+        "rippling",
+        "personio"
+      ]
     },
     "maxJobs": {
       "title": "Max jobs (total)",
@@ -95,8 +116,22 @@
       "description": "Keep only these normalized employment types. Jobs whose type is unknown are kept unless you also enable strictEmploymentType.",
       "items": {
         "type": "string",
-        "enum": ["full_time", "part_time", "contract", "temporary", "internship", "other"],
-        "enumTitles": ["Full-time", "Part-time", "Contract", "Temporary", "Internship", "Other"]
+        "enum": [
+          "full_time",
+          "part_time",
+          "contract",
+          "temporary",
+          "internship",
+          "other"
+        ],
+        "enumTitles": [
+          "Full-time",
+          "Part-time",
+          "Contract",
+          "Temporary",
+          "Internship",
+          "Other"
+        ]
       },
       "default": []
     },
@@ -128,8 +163,16 @@
       "type": "string",
       "editor": "select",
       "description": "Only used when includeDescription is on.",
-      "enum": ["html", "text", "both"],
-      "enumTitles": ["HTML only", "Plain text only", "Both"],
+      "enum": [
+        "html",
+        "text",
+        "both"
+      ],
+      "enumTitles": [
+        "HTML only",
+        "Plain text only",
+        "Both"
+      ],
       "default": "text"
     },
     "redactContacts": {
@@ -144,8 +187,16 @@
       "type": "string",
       "editor": "select",
       "description": "minimal = title, company, location, url, postedAt. compact = minimal plus remote, department, employmentType, salary. full = every field. Use minimal for AI agents to cut token cost.",
-      "enum": ["full", "compact", "minimal"],
-      "enumTitles": ["Full", "Compact", "Minimal"],
+      "enum": [
+        "full",
+        "compact",
+        "minimal"
+      ],
+      "enumTitles": [
+        "Full",
+        "Compact",
+        "Minimal"
+      ],
       "default": "full"
     },
     "includeCompanySummary": {
@@ -167,8 +218,14 @@
       "type": "string",
       "editor": "select",
       "description": "id = drop repeats of the same ATS job id (always on). content = also merge same title + company + location + requisition id. May merge genuinely separate openings for the same role; leave off unless you see duplicates.",
-      "enum": ["id", "content"],
-      "enumTitles": ["By ATS job id", "By id and content"],
+      "enum": [
+        "id",
+        "content"
+      ],
+      "enumTitles": [
+        "By ATS job id",
+        "By id and content"
+      ],
       "default": "id"
     },
     "onlyNewJobs": {
@@ -225,5 +282,7 @@
       "default": false
     }
   },
-  "required": ["companies"]
+  "required": [
+    "companies"
+  ]
 }

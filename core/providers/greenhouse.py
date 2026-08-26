@@ -94,6 +94,15 @@ async def fetch(ref: Ref, client: Any, *, options: dict[str, Any] | None = None)
     """
     url = f"{API_BASE}/{ref.slug}/jobs"
     oversize = False
+    # §7.7: the history snapshot fetches metadata only, and `content=true` is what makes
+    # a Stripe-sized board 4.48 MB on the wire. Same switch Rippling reads to skip its
+    # detail call (§7.3), so "list-only" is one word across every adapter.
+    list_only = (
+        bool((options or {}).get("listOnly")) or (options or {}).get("outputProfile") == "minimal"
+    )
+    if list_only:
+        jobs = await client.get_json(url, params={"pay_transparency": "true"}, parse=_board)
+        return [to_record(job, ref, options) for job in jobs]
 
     def parse(response: httpx.Response) -> list[dict[str, Any]]:
         nonlocal oversize

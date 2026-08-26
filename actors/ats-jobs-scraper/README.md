@@ -2,6 +2,10 @@
 
 Live job postings straight from six **public ATS APIs** — Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio — normalized into one schema with structured salary. You give it company slugs or career-site URLs; it gives you clean job rows. Seven filters run **before** anything is billed, company summaries and error rows are free, and `onlyNewJobs` keeps a per-company baseline in your own key-value store so a monitoring run returns only what changed. No scraping, no browsers, no proxies, no API keys.
 
+**We index nothing.** There is no "jobs in our database" number here because there is no database — every row in your run was fetched from the employer's own board seconds earlier. And because you are billed only for job rows you actually receive, a 2,000-company daily watch with `onlyNewJobs` costs about **8 cents a run**.
+
+**What this is not:** no keyword search without a company list (directory mode ships next); `remote` is often `null` on Greenhouse, Personio and Rippling because the board never said; not an aggregator — six ATS platforms, live, and nothing else.
+
 ## What this ATS jobs API does
 
 - **Greenhouse** — [`boards-api.greenhouse.io/v1/boards/{slug}/jobs`](https://developers.greenhouse.io/job-board.html), with pay-transparency ranges
@@ -28,7 +32,7 @@ Rows you are **not** charged for: company summaries, error rows, jobs removed by
 
 ## How to use the Greenhouse, Lever and Ashby job APIs in one run
 
-1. **Paste your companies.** One per line, in any of these forms: a career-site URL (`https://job-boards.greenhouse.io/anthropic`), a prefixed slug (`lever:palantir`, `ashby:openai`, `personio:personio`), A bare slug or company name on its own is not enough yet \u2014 give it a prefix or a URL. Directory mode, which resolves a bare company name, ships in the next release.
+1. **Paste your companies.** One per line. Use a career-site URL (`https://job-boards.greenhouse.io/anthropic`) or a prefixed slug (`lever:palantir`, `ashby:openai`, `personio:personio`). A bare company name does not resolve yet — directory mode ships in the next release.
 2. **Set your filters.** Title keywords, excluded titles, location, remote-only, departments, employment types, posted-after. They all run locally on the fetched JSON, before billing.
 3. **Run it, or schedule it.** For monitoring, turn on `onlyNewJobs` and give the task its own `stateKey`; the first run stores the baseline and later runs return only what is new.
 
@@ -97,7 +101,9 @@ Saved input from another job-board Actor runs here unchanged. These input keys a
 | `dedupe` | string | `id` | `content` also merges same title + company + location + requisition id |
 | `onlyNewJobs` | boolean | false | Returns only ids not in your state store |
 | `stateKey` | string | `ats-jobs-state-default` | Name of the key-value store holding seen ids |
+| `stateRetentionDays` | integer | 90 | Forgets ids that stopped appearing, so the delta store cannot grow forever |
 | `maxConcurrency` | integer | 8 | Speed only; per-host rate is capped separately |
+| `requestTimeoutSecs` | integer | 30 | Per-request timeout; a slow board fails its own row, not the run |
 | `failOnAllErrors` | boolean | false | Fails the run when no company returned any job |
 
 ## Output
@@ -188,7 +194,13 @@ Two dataset views are provided: **Jobs** (spreadsheet-ready postings) and **Comp
 
 ## Pricing
 
-**$0.002 per job row. That is the only paid event.** No start fee beyond Apify's platform default of $0.00005 per run.
+**$0.002 per job row — the only event that costs real money.** Everything else on the Pricing tab is platform floor:
+
+| Event | Price | What it is |
+|---|---|---|
+| `job` | **$0.002** | One job row delivered to your dataset. This is the price. |
+| `apify-actor-start` | $0.00005 | Apify's platform default, charged once per run. |
+| `delta-run` | $0.00001 | Instrumentation, recorded once per run when `onlyNewJobs` is on. The platform will not accept a $0.00 event price, so it sits at the floor — one cent per thousand monitoring runs. It exists so we can see that delta mode is used at all, and it buys us nothing else. |
 
 Free, always: company summary rows, error rows, jobs removed by your filters, companies we never reached because your `maxJobs` cap fired, and companies that failed.
 
@@ -259,7 +271,7 @@ Per-ATS listings with the same engine and the same schema — Greenhouse jobs, L
 
 **How do I get the company list?** Paste career-site URLs you already have, or use prefixed slugs. You can also open an issue on the repo to add a company to the public ATS directory that directory mode will use.
 
-**Company not found?** Every entry needs a prefix (`lever:palantir`) or a career-site URL \u2014 a bare company name does not resolve until directory mode ships. If a prefixed slug still fails, check the slug casing on Lever and confirm the board is really hosted by that ATS.
+**Company not found?** Every entry needs a prefix (`lever:palantir`) or a career-site URL — a bare company name does not resolve until directory mode ships. If a prefixed slug still fails, check the slug casing on Lever and confirm the board is really hosted by that ATS.
 
 **Why is `remote` null?** Because nothing said otherwise. See Filters, deduplication and normalization.
 

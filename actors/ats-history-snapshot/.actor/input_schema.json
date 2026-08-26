@@ -1,0 +1,74 @@
+{
+  "title": "ATS History Snapshot",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "shard": {
+      "title": "Shard",
+      "type": "integer",
+      "description": "Which shard of the 64 state buckets this run owns. Shard 0 owns buckets 00-15, shard 1 owns 16-31, and so on (SPEC v2 §7.2). One Apify Schedule per shard, staggered 25 minutes apart so the global per-host rate stays at 2 rps. The shard count is fixed at 4 in code: a schedule that disagreed with its siblings would double the request rate on every shared ATS host.",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 7
+    },
+    "maxCompanies": {
+      "title": "Max companies",
+      "type": "integer",
+      "description": "Cap on companies swept in this run. 0 sweeps the whole shard. Use a small value for a smoke run.",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 20000
+    },
+    "costCeilingUsd": {
+      "title": "Cost ceiling (USD per run)",
+      "type": "number",
+      "description": "Hard budget guard, per run. The run refuses to start if its estimated platform cost exceeds this, and stops early — failing, so the schedule emails you — if the running estimate reaches it. A full 385-company shard measured $0.0157; the default leaves 1.6x headroom. Raising it does not raise the monthly cap: the run also refuses to start once meta.spend shows this month past $3.25.",
+      "default": 0.025,
+      "minimum": 0,
+      "maximum": 5
+    },
+    "maxConcurrency": {
+      "title": "Max concurrency",
+      "type": "integer",
+      "description": "Companies fetched in parallel inside one bucket. The per-host token bucket in core.http still caps each ATS host at 2 rps (1 rps for Lever), so this only helps across providers.",
+      "default": 8,
+      "minimum": 1,
+      "maximum": 16
+    },
+    "requestTimeoutSecs": {
+      "title": "Request timeout (seconds)",
+      "type": "integer",
+      "description": "Per-request timeout handed to the shared HTTP client.",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 120
+    },
+    "reseedWatchlist": {
+      "title": "Reseed the watchlist",
+      "type": "boolean",
+      "description": "Merge the company directory back into the stored watchlist before sweeping. Companies already tracked are never dropped (§7.6).",
+      "default": false
+    },
+    "force": {
+      "title": "Force re-collection",
+      "type": "boolean",
+      "description": "Re-diff buckets already collected today. Off, a restarted run resumes and skips them.",
+      "default": false
+    },
+    "purgeProvider": {
+      "title": "Takedown: purge a provider",
+      "type": "string",
+      "editor": "textfield",
+      "description": "§15.1 policy 4. When set, the run performs a takedown instead of a sweep: every state bucket and every stored event file is rewritten with this provider's rows removed, then the run exits. Leave empty for a normal run.",
+      "default": ""
+    },
+    "purgeCompany": {
+      "title": "Takedown: limit the purge to one company",
+      "type": "string",
+      "editor": "textfield",
+      "description": "Used only with the purge field above. The company slug to drop; empty purges the whole provider.",
+      "default": ""
+    }
+  },
+  "required": []
+}

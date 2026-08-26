@@ -2,7 +2,7 @@
   "actorSpecification": 1,
   "name": "ats-jobs-scraper",
   "title": "ATS Jobs API — Greenhouse, Lever, Ashby +3",
-  "description": "Live job postings from the Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio public job-board APIs, normalized into one schema with structured salary.",
+  "description": "Live job postings from the Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio public job-board APIs. Company slugs or career-site URLs in, one normalized schema out with structured salary. No scraping, no proxies, no API keys.",
   "version": "0.1",
   "buildTag": "latest",
   "minMemoryMbytes": 256,
@@ -12,5 +12,7 @@
   "readme": "../README.md",
   "input": "./input_schema.json",
   "output": "./output_schema.json",
-  "storages": { "dataset": "./dataset_schema.json" }
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
 }

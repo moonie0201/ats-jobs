@@ -172,3 +172,37 @@ def test_int_ids_are_normalised_to_strings():
     state, events = diff({}, [fetched(job_id=4567)], TODAY, PROVIDER, COMPANY)
     assert set(state) == {"4567"}
     assert events[0]["job_id"] == "4567"
+
+
+def test_a_repost_under_a_new_id_is_not_billed_as_a_fill():
+    """H1 M6: Greenhouse and Lever mint a new job id on re-post, so the common repost
+    arrives as removed+added. Counting it as a fill biases `median_days_open_of_removed`,
+    the flagship history metric of the paid Actor (§7.5)."""
+    old = {"t": "Backend Engineer", "loc": "Berlin", "dept": "Eng", "remote": False}
+    prev = {"1": {**old, "h": jhash(old), "posted": "2026-08-01", "first_seen": "2026-08-01"}}
+
+    _, events = diff(prev, [{"id": "2", **old}], "2026-08-26", "greenhouse", "acme")
+
+    by_ev = {e["ev"]: e for e in events}
+    assert set(by_ev) == {"added", "removed"}
+    assert by_ev["removed"]["days_open"] is None, "a repost is one requisition, not a hire"
+
+
+def test_a_real_removal_still_reports_days_open():
+    old = {"t": "Backend Engineer", "loc": "Berlin", "dept": "Eng", "remote": False}
+    prev = {"1": {**old, "h": jhash(old), "posted": "2026-08-01", "first_seen": "2026-08-01"}}
+
+    _, events = diff(prev, [], "2026-08-26", "greenhouse", "acme")
+
+    assert [(e["ev"], e["days_open"]) for e in events] == [("removed", 25)]
+
+
+def test_a_hash_scheme_change_alone_emits_no_event():
+    """H1 L2: the day a field is added to CHANGE_FIELDS every stored job rehashes at once.
+    Without the guard that is one `changed: []` event per job in the whole store."""
+    job = {"t": "Backend Engineer", "loc": "Berlin", "dept": "Eng", "remote": False}
+    prev = {"1": {**job, "h": "stale-hash", "posted": "2026-08-01", "first_seen": "2026-08-01"}}
+
+    _, events = diff(prev, [{"id": "1", **job}], "2026-08-26", "greenhouse", "acme")
+
+    assert events == []

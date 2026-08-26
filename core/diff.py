@@ -129,8 +129,12 @@ def diff(
         nxt[jid] = rec
         if old is None:
             events.append(_event("added", jid, rec, today, provider, company))
-        elif old.get("h") != h:
-            changed = [k for k in CHANGE_FIELDS if old.get(k) != rec.get(k)]
+        elif old.get("h") != h and (
+            changed := [k for k in CHANGE_FIELDS if canon(old.get(k)) != canon(rec.get(k))]
+        ):
+            # A hash-scheme change (a field added to CHANGE_FIELDS) rehashes every stored
+            # job at once. Without the walrus guard that emits `changed: []` for all of
+            # them — one semantically empty event per job in the whole store (H1 L2).
             events.append(_event("changed", jid, rec, today, provider, company, changed=changed))
     for jid, old in prev.items():
         if jid not in cur_by_id:
@@ -145,4 +149,14 @@ def diff(
                     days_open=_days_open(today, old.get("posted")),
                 )
             )
+    # §7.5: Greenhouse and Lever mint a **new** job id on a re-post, so the common repost
+    # arrives as removed+added rather than as a `changed`. Billing that pair as a fill
+    # would make `median_days_open_of_removed` — the flagship history metric — count every
+    # repost as a hire, so the fill signal is withheld when the same canonical job
+    # (title, location, department, remote) is still open under a different id (H1 M6).
+    reposted = {nxt[e["job_id"]]["h"] for e in events if e["ev"] == "added"}
+    if reposted:
+        for event in events:
+            if event["ev"] == "removed" and prev[event["job_id"]].get("h") in reposted:
+                event["days_open"] = None
     return nxt, events

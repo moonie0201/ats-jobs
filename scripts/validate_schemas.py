@@ -11,6 +11,10 @@ Checks, in the order §11.1 lists them:
 * the word "Official" appears in no title, name or other SEO-visible field (§3.3, V1 L6)
 * the provider enum is identical across `input_schema.json`, `dataset_schema.json` and
   the Actor README — a drifting enum is the Congruency failure §13.5 warns about
+* `actor.json`'s description names every provider in the input enum and keeps the
+  "no scraping / no proxies / no API keys" clause the Store listing sells on — H2 P3-1:
+  the Store description and `actor.json` had already diverged, and only the Store one is
+  visible, so the drift was silent
 * every `core.models.STATUSES` value is named in the dataset schema's `status`
   description: the Actor pushed `provider_unavailable` while the schema documented seven
   of the twelve statuses, and the provider-only lint never saw it (V1 M2)
@@ -157,6 +161,26 @@ def check_dataset_schema(path: Path, doc: dict[str, Any], errors: list[str]) -> 
     return [value for value in enum if value is not None]
 
 
+#: H2 P3-1. The Store description is edited in Console and `actor.json`'s is edited here;
+#: the page shows the Store one, so a divergence is invisible until a buyer reads both.
+CONGRUENT_CLAUSES = ("no scraping", "no proxies", "no api keys")
+
+
+def check_actor_description(
+    doc: dict[str, Any], label: str, providers: list[str], errors: list[str]
+) -> None:
+    text = str(doc.get("description") or "").casefold()
+    if not text:
+        errors.append(f"{label}: no description")
+        return
+    missing = [p for p in providers if p.casefold() not in text]
+    if missing:
+        errors.append(f"{label}: description never names {missing} (§13.5 congruency)")
+    absent = [c for c in CONGRUENT_CLAUSES if c not in text]
+    if absent:
+        errors.append(f"{label}: description drops the Store listing's {absent} clause")
+
+
 def check_readme_providers(readme: Path, providers: list[str], errors: list[str]) -> None:
     text = readme.read_text(encoding="utf-8").casefold()
     missing = [p for p in providers if p.casefold() not in text]
@@ -217,6 +241,8 @@ def validate_actor(actor_dir: Path, errors: list[str]) -> None:
     readme = actor_dir / "README.md"
     if input_enum and readme.exists():
         check_readme_providers(readme, input_enum, errors)
+    if input_enum and actor_json is not None:
+        check_actor_description(actor_json, f"{actor_dir.name}/actor.json", input_enum, errors)
 
 
 def main() -> int:
