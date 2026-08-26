@@ -1,0 +1,4 @@
+# Runtime pins, shared by every Actor image (SPEC v2 §9.3).
+apify>=4.0,<5
+httpx>=0.27,<1
+defusedxml>=0.7

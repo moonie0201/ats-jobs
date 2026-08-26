@@ -1,0 +1,6 @@
+# Dev/test only (SPEC v2 §9.3). pytest-cov is required by the --cov flags in ci.yml (§11.1).
+pytest>=8
+pytest-asyncio>=0.23
+pytest-cov>=5
+respx>=0.21
+ruff>=0.6

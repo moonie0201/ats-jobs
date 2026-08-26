@@ -1,0 +1,16 @@
+{
+  "actorSpecification": 1,
+  "name": "ats-jobs-scraper",
+  "title": "ATS Jobs API — Greenhouse, Lever, Ashby +3",
+  "description": "Live job postings from the Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio public job-board APIs, normalized into one schema with structured salary.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": { "dataset": "./dataset_schema.json" }
+}

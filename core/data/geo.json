@@ -1,0 +1,1359 @@
+{
+"countries": {
+"AW": {
+"name": "Aruba",
+"alpha3": "ABW"
+},
+"AF": {
+"name": "Afghanistan",
+"alpha3": "AFG"
+},
+"AO": {
+"name": "Angola",
+"alpha3": "AGO"
+},
+"AI": {
+"name": "Anguilla",
+"alpha3": "AIA"
+},
+"AX": {
+"name": "Åland Islands",
+"alpha3": "ALA"
+},
+"AL": {
+"name": "Albania",
+"alpha3": "ALB",
+"currency": "ALL"
+},
+"AD": {
+"name": "Andorra",
+"alpha3": "AND",
+"currency": "EUR"
+},
+"AE": {
+"name": "United Arab Emirates",
+"alpha3": "ARE",
+"aliases": [
+"Abu Dhabi",
+"Dubai",
+"U.A.E.",
+"UAE"
+],
+"currency": "AED"
+},
+"AR": {
+"name": "Argentina",
+"alpha3": "ARG",
+"currency": "ARS"
+},
+"AM": {
+"name": "Armenia",
+"alpha3": "ARM",
+"currency": "AMD"
+},
+"AS": {
+"name": "American Samoa",
+"alpha3": "ASM"
+},
+"AQ": {
+"name": "Antarctica",
+"alpha3": "ATA"
+},
+"TF": {
+"name": "French Southern Territories",
+"alpha3": "ATF"
+},
+"AG": {
+"name": "Antigua and Barbuda",
+"alpha3": "ATG"
+},
+"AU": {
+"name": "Australia",
+"alpha3": "AUS",
+"currency": "AUD"
+},
+"AT": {
+"name": "Austria",
+"alpha3": "AUT",
+"aliases": [
+"Osterreich",
+"Österreich"
+],
+"currency": "EUR"
+},
+"AZ": {
+"name": "Azerbaijan",
+"alpha3": "AZE",
+"currency": "AZN"
+},
+"BI": {
+"name": "Burundi",
+"alpha3": "BDI"
+},
+"BE": {
+"name": "Belgium",
+"alpha3": "BEL",
+"currency": "EUR"
+},
+"BJ": {
+"name": "Benin",
+"alpha3": "BEN"
+},
+"BQ": {
+"name": "Bonaire, Sint Eustatius and Saba",
+"alpha3": "BES"
+},
+"BF": {
+"name": "Burkina Faso",
+"alpha3": "BFA"
+},
+"BD": {
+"name": "Bangladesh",
+"alpha3": "BGD",
+"currency": "BDT"
+},
+"BG": {
+"name": "Bulgaria",
+"alpha3": "BGR",
+"currency": "BGN"
+},
+"BH": {
+"name": "Bahrain",
+"alpha3": "BHR",
+"currency": "BHD"
+},
+"BS": {
+"name": "Bahamas",
+"alpha3": "BHS"
+},
+"BA": {
+"name": "Bosnia and Herzegovina",
+"alpha3": "BIH",
+"aliases": [
+"Bosnia"
+],
+"currency": "BAM"
+},
+"BL": {
+"name": "Saint Barthélemy",
+"alpha3": "BLM"
+},
+"BY": {
+"name": "Belarus",
+"alpha3": "BLR",
+"currency": "BYN"
+},
+"BZ": {
+"name": "Belize",
+"alpha3": "BLZ"
+},
+"BM": {
+"name": "Bermuda",
+"alpha3": "BMU"
+},
+"BO": {
+"name": "Bolivia",
+"alpha3": "BOL",
+"aliases": [
+"Bolivia, Plurinational State of"
+]
+},
+"BR": {
+"name": "Brazil",
+"alpha3": "BRA",
+"aliases": [
+"Brasil"
+],
+"currency": "BRL"
+},
+"BB": {
+"name": "Barbados",
+"alpha3": "BRB"
+},
+"BN": {
+"name": "Brunei",
+"alpha3": "BRN",
+"aliases": [
+"Brunei Darussalam"
+]
+},
+"BT": {
+"name": "Bhutan",
+"alpha3": "BTN"
+},
+"BV": {
+"name": "Bouvet Island",
+"alpha3": "BVT"
+},
+"BW": {
+"name": "Botswana",
+"alpha3": "BWA"
+},
+"CF": {
+"name": "Central African Republic",
+"alpha3": "CAF"
+},
+"CA": {
+"name": "Canada",
+"alpha3": "CAN",
+"currency": "CAD"
+},
+"CC": {
+"name": "Cocos (Keeling) Islands",
+"alpha3": "CCK"
+},
+"CH": {
+"name": "Switzerland",
+"alpha3": "CHE",
+"aliases": [
+"Schweiz",
+"Suisse"
+],
+"currency": "CHF"
+},
+"CL": {
+"name": "Chile",
+"alpha3": "CHL",
+"currency": "CLP"
+},
+"CN": {
+"name": "China",
+"alpha3": "CHN",
+"aliases": [
+"Mainland China",
+"PRC"
+],
+"currency": "CNY"
+},
+"CI": {
+"name": "Côte d'Ivoire",
+"alpha3": "CIV",
+"aliases": [
+"Ivory Coast"
+]
+},
+"CM": {
+"name": "Cameroon",
+"alpha3": "CMR"
+},
+"CD": {
+"name": "Democratic Republic of the Congo",
+"alpha3": "COD",
+"aliases": [
+"Congo, The Democratic Republic of the",
+"Congo-Kinshasa",
+"DRC"
+]
+},
+"CG": {
+"name": "Congo",
+"alpha3": "COG",
+"aliases": [
+"Congo-Brazzaville"
+]
+},
+"CK": {
+"name": "Cook Islands",
+"alpha3": "COK"
+},
+"CO": {
+"name": "Colombia",
+"alpha3": "COL",
+"currency": "COP"
+},
+"KM": {
+"name": "Comoros",
+"alpha3": "COM"
+},
+"CV": {
+"name": "Cabo Verde",
+"alpha3": "CPV",
+"aliases": [
+"Cape Verde"
+]
+},
+"CR": {
+"name": "Costa Rica",
+"alpha3": "CRI",
+"currency": "CRC"
+},
+"CU": {
+"name": "Cuba",
+"alpha3": "CUB"
+},
+"CW": {
+"name": "Curaçao",
+"alpha3": "CUW"
+},
+"CX": {
+"name": "Christmas Island",
+"alpha3": "CXR"
+},
+"KY": {
+"name": "Cayman Islands",
+"alpha3": "CYM"
+},
+"CY": {
+"name": "Cyprus",
+"alpha3": "CYP",
+"currency": "EUR"
+},
+"CZ": {
+"name": "Czechia",
+"alpha3": "CZE",
+"aliases": [
+"Czech Republic"
+],
+"currency": "CZK"
+},
+"DE": {
+"name": "Germany",
+"alpha3": "DEU",
+"aliases": [
+"Deutschland"
+],
+"currency": "EUR"
+},
+"DJ": {
+"name": "Djibouti",
+"alpha3": "DJI"
+},
+"DM": {
+"name": "Dominica",
+"alpha3": "DMA"
+},
+"DK": {
+"name": "Denmark",
+"alpha3": "DNK",
+"aliases": [
+"Danmark"
+],
+"currency": "DKK"
+},
+"DO": {
+"name": "Dominican Republic",
+"alpha3": "DOM",
+"currency": "DOP"
+},
+"DZ": {
+"name": "Algeria",
+"alpha3": "DZA"
+},
+"EC": {
+"name": "Ecuador",
+"alpha3": "ECU",
+"currency": "USD"
+},
+"EG": {
+"name": "Egypt",
+"alpha3": "EGY",
+"currency": "EGP"
+},
+"ER": {
+"name": "Eritrea",
+"alpha3": "ERI"
+},
+"EH": {
+"name": "Western Sahara",
+"alpha3": "ESH"
+},
+"ES": {
+"name": "Spain",
+"alpha3": "ESP",
+"aliases": [
+"Espana",
+"España"
+]
+},
+"EE": {
+"name": "Estonia",
+"alpha3": "EST",
+"currency": "EUR"
+},
+"ET": {
+"name": "Ethiopia",
+"alpha3": "ETH",
+"currency": "ETB"
+},
+"FI": {
+"name": "Finland",
+"alpha3": "FIN",
+"aliases": [
+"Suomi"
+],
+"currency": "EUR"
+},
+"FJ": {
+"name": "Fiji",
+"alpha3": "FJI"
+},
+"FK": {
+"name": "Falkland Islands (Malvinas)",
+"alpha3": "FLK"
+},
+"FR": {
+"name": "France",
+"alpha3": "FRA",
+"currency": "EUR"
+},
+"FO": {
+"name": "Faroe Islands",
+"alpha3": "FRO"
+},
+"FM": {
+"name": "Micronesia, Federated States of",
+"alpha3": "FSM"
+},
+"GA": {
+"name": "Gabon",
+"alpha3": "GAB"
+},
+"GB": {
+"name": "United Kingdom",
+"alpha3": "GBR",
+"aliases": [
+"Britain",
+"England",
+"Great Britain",
+"Northern Ireland",
+"Scotland",
+"U.K.",
+"UK",
+"Wales"
+],
+"currency": "GBP"
+},
+"GE": {
+"name": "Georgia",
+"alpha3": "GEO",
+"currency": "GEL"
+},
+"GG": {
+"name": "Guernsey",
+"alpha3": "GGY"
+},
+"GH": {
+"name": "Ghana",
+"alpha3": "GHA",
+"currency": "GHS"
+},
+"GI": {
+"name": "Gibraltar",
+"alpha3": "GIB"
+},
+"GN": {
+"name": "Guinea",
+"alpha3": "GIN"
+},
+"GP": {
+"name": "Guadeloupe",
+"alpha3": "GLP"
+},
+"GM": {
+"name": "Gambia",
+"alpha3": "GMB"
+},
+"GW": {
+"name": "Guinea-Bissau",
+"alpha3": "GNB"
+},
+"GQ": {
+"name": "Equatorial Guinea",
+"alpha3": "GNQ"
+},
+"GR": {
+"name": "Greece",
+"alpha3": "GRC",
+"currency": "EUR"
+},
+"GD": {
+"name": "Grenada",
+"alpha3": "GRD"
+},
+"GL": {
+"name": "Greenland",
+"alpha3": "GRL"
+},
+"GT": {
+"name": "Guatemala",
+"alpha3": "GTM",
+"currency": "GTQ"
+},
+"GF": {
+"name": "French Guiana",
+"alpha3": "GUF"
+},
+"GU": {
+"name": "Guam",
+"alpha3": "GUM",
+"currency": "USD"
+},
+"GY": {
+"name": "Guyana",
+"alpha3": "GUY"
+},
+"HK": {
+"name": "Hong Kong",
+"alpha3": "HKG",
+"aliases": [
+"Hong Kong SAR"
+],
+"currency": "HKD"
+},
+"HM": {
+"name": "Heard Island and McDonald Islands",
+"alpha3": "HMD"
+},
+"HN": {
+"name": "Honduras",
+"alpha3": "HND"
+},
+"HR": {
+"name": "Croatia",
+"alpha3": "HRV",
+"currency": "EUR"
+},
+"HT": {
+"name": "Haiti",
+"alpha3": "HTI"
+},
+"HU": {
+"name": "Hungary",
+"alpha3": "HUN",
+"currency": "HUF"
+},
+"ID": {
+"name": "Indonesia",
+"alpha3": "IDN",
+"currency": "IDR"
+},
+"IM": {
+"name": "Isle of Man",
+"alpha3": "IMN"
+},
+"IN": {
+"name": "India",
+"alpha3": "IND",
+"aliases": [
+"Bharat"
+],
+"currency": "INR"
+},
+"IO": {
+"name": "British Indian Ocean Territory",
+"alpha3": "IOT"
+},
+"IE": {
+"name": "Ireland",
+"alpha3": "IRL",
+"aliases": [
+"Eire",
+"Republic of Ireland"
+],
+"currency": "EUR"
+},
+"IR": {
+"name": "Iran",
+"alpha3": "IRN",
+"aliases": [
+"Iran, Islamic Republic of"
+]
+},
+"IQ": {
+"name": "Iraq",
+"alpha3": "IRQ"
+},
+"IS": {
+"name": "Iceland",
+"alpha3": "ISL",
+"currency": "ISK"
+},
+"IL": {
+"name": "Israel",
+"alpha3": "ISR",
+"currency": "ILS"
+},
+"IT": {
+"name": "Italy",
+"alpha3": "ITA",
+"aliases": [
+"Italia"
+],
+"currency": "EUR"
+},
+"JM": {
+"name": "Jamaica",
+"alpha3": "JAM"
+},
+"JE": {
+"name": "Jersey",
+"alpha3": "JEY"
+},
+"JO": {
+"name": "Jordan",
+"alpha3": "JOR",
+"currency": "JOD"
+},
+"JP": {
+"name": "Japan",
+"alpha3": "JPN",
+"aliases": [
+"Nippon"
+],
+"currency": "JPY"
+},
+"KZ": {
+"name": "Kazakhstan",
+"alpha3": "KAZ",
+"currency": "KZT"
+},
+"KE": {
+"name": "Kenya",
+"alpha3": "KEN",
+"currency": "KES"
+},
+"KG": {
+"name": "Kyrgyzstan",
+"alpha3": "KGZ"
+},
+"KH": {
+"name": "Cambodia",
+"alpha3": "KHM"
+},
+"KI": {
+"name": "Kiribati",
+"alpha3": "KIR"
+},
+"KN": {
+"name": "Saint Kitts and Nevis",
+"alpha3": "KNA"
+},
+"KR": {
+"name": "South Korea",
+"alpha3": "KOR",
+"aliases": [
+"Korea",
+"Korea, Republic of",
+"Republic of Korea"
+],
+"currency": "KRW"
+},
+"KW": {
+"name": "Kuwait",
+"alpha3": "KWT",
+"currency": "KWD"
+},
+"LA": {
+"name": "Laos",
+"alpha3": "LAO",
+"aliases": [
+"Lao People's Democratic Republic"
+]
+},
+"LB": {
+"name": "Lebanon",
+"alpha3": "LBN",
+"currency": "LBP"
+},
+"LR": {
+"name": "Liberia",
+"alpha3": "LBR"
+},
+"LY": {
+"name": "Libya",
+"alpha3": "LBY"
+},
+"LC": {
+"name": "Saint Lucia",
+"alpha3": "LCA"
+},
+"LI": {
+"name": "Liechtenstein",
+"alpha3": "LIE",
+"currency": "CHF"
+},
+"LK": {
+"name": "Sri Lanka",
+"alpha3": "LKA",
+"currency": "LKR"
+},
+"LS": {
+"name": "Lesotho",
+"alpha3": "LSO"
+},
+"LT": {
+"name": "Lithuania",
+"alpha3": "LTU",
+"currency": "EUR"
+},
+"LU": {
+"name": "Luxembourg",
+"alpha3": "LUX",
+"currency": "EUR"
+},
+"LV": {
+"name": "Latvia",
+"alpha3": "LVA",
+"currency": "EUR"
+},
+"MO": {
+"name": "Macao",
+"alpha3": "MAC",
+"aliases": [
+"Macau"
+]
+},
+"MF": {
+"name": "Saint Martin (French part)",
+"alpha3": "MAF"
+},
+"MA": {
+"name": "Morocco",
+"alpha3": "MAR",
+"currency": "MAD"
+},
+"MC": {
+"name": "Monaco",
+"alpha3": "MCO",
+"currency": "EUR"
+},
+"MD": {
+"name": "Moldova",
+"alpha3": "MDA",
+"aliases": [
+"Moldova, Republic of"
+],
+"currency": "MDL"
+},
+"MG": {
+"name": "Madagascar",
+"alpha3": "MDG"
+},
+"MV": {
+"name": "Maldives",
+"alpha3": "MDV"
+},
+"MX": {
+"name": "Mexico",
+"alpha3": "MEX",
+"aliases": [
+"México"
+],
+"currency": "MXN"
+},
+"MH": {
+"name": "Marshall Islands",
+"alpha3": "MHL"
+},
+"MK": {
+"name": "North Macedonia",
+"alpha3": "MKD",
+"aliases": [
+"Macedonia"
+],
+"currency": "MKD"
+},
+"ML": {
+"name": "Mali",
+"alpha3": "MLI"
+},
+"MT": {
+"name": "Malta",
+"alpha3": "MLT",
+"currency": "EUR"
+},
+"MM": {
+"name": "Myanmar",
+"alpha3": "MMR",
+"aliases": [
+"Burma"
+]
+},
+"ME": {
+"name": "Montenegro",
+"alpha3": "MNE",
+"currency": "EUR"
+},
+"MN": {
+"name": "Mongolia",
+"alpha3": "MNG"
+},
+"MP": {
+"name": "Northern Mariana Islands",
+"alpha3": "MNP"
+},
+"MZ": {
+"name": "Mozambique",
+"alpha3": "MOZ"
+},
+"MR": {
+"name": "Mauritania",
+"alpha3": "MRT"
+},
+"MS": {
+"name": "Montserrat",
+"alpha3": "MSR"
+},
+"MQ": {
+"name": "Martinique",
+"alpha3": "MTQ"
+},
+"MU": {
+"name": "Mauritius",
+"alpha3": "MUS"
+},
+"MW": {
+"name": "Malawi",
+"alpha3": "MWI"
+},
+"MY": {
+"name": "Malaysia",
+"alpha3": "MYS",
+"currency": "MYR"
+},
+"YT": {
+"name": "Mayotte",
+"alpha3": "MYT"
+},
+"NA": {
+"name": "Namibia",
+"alpha3": "NAM"
+},
+"NC": {
+"name": "New Caledonia",
+"alpha3": "NCL"
+},
+"NE": {
+"name": "Niger",
+"alpha3": "NER"
+},
+"NF": {
+"name": "Norfolk Island",
+"alpha3": "NFK"
+},
+"NG": {
+"name": "Nigeria",
+"alpha3": "NGA",
+"currency": "NGN"
+},
+"NI": {
+"name": "Nicaragua",
+"alpha3": "NIC"
+},
+"NU": {
+"name": "Niue",
+"alpha3": "NIU"
+},
+"NL": {
+"name": "Netherlands",
+"alpha3": "NLD",
+"aliases": [
+"Holland",
+"Nederland",
+"The Netherlands"
+],
+"currency": "EUR"
+},
+"NO": {
+"name": "Norway",
+"alpha3": "NOR",
+"aliases": [
+"Norge"
+],
+"currency": "NOK"
+},
+"NP": {
+"name": "Nepal",
+"alpha3": "NPL",
+"currency": "NPR"
+},
+"NR": {
+"name": "Nauru",
+"alpha3": "NRU"
+},
+"NZ": {
+"name": "New Zealand",
+"alpha3": "NZL",
+"currency": "NZD"
+},
+"OM": {
+"name": "Oman",
+"alpha3": "OMN",
+"currency": "OMR"
+},
+"PK": {
+"name": "Pakistan",
+"alpha3": "PAK",
+"currency": "PKR"
+},
+"PA": {
+"name": "Panama",
+"alpha3": "PAN",
+"currency": "USD"
+},
+"PN": {
+"name": "Pitcairn",
+"alpha3": "PCN"
+},
+"PE": {
+"name": "Peru",
+"alpha3": "PER",
+"currency": "PEN"
+},
+"PH": {
+"name": "Philippines",
+"alpha3": "PHL",
+"currency": "PHP"
+},
+"PW": {
+"name": "Palau",
+"alpha3": "PLW"
+},
+"PG": {
+"name": "Papua New Guinea",
+"alpha3": "PNG"
+},
+"PL": {
+"name": "Poland",
+"alpha3": "POL",
+"aliases": [
+"Polska"
+],
+"currency": "PLN"
+},
+"PR": {
+"name": "Puerto Rico",
+"alpha3": "PRI",
+"currency": "USD"
+},
+"KP": {
+"name": "North Korea",
+"alpha3": "PRK",
+"aliases": [
+"Korea, Democratic People's Republic of"
+]
+},
+"PT": {
+"name": "Portugal",
+"alpha3": "PRT",
+"currency": "EUR"
+},
+"PY": {
+"name": "Paraguay",
+"alpha3": "PRY"
+},
+"PS": {
+"name": "Palestine",
+"alpha3": "PSE",
+"aliases": [
+"Palestine, State of"
+]
+},
+"PF": {
+"name": "French Polynesia",
+"alpha3": "PYF"
+},
+"QA": {
+"name": "Qatar",
+"alpha3": "QAT",
+"currency": "QAR"
+},
+"RE": {
+"name": "Réunion",
+"alpha3": "REU"
+},
+"RO": {
+"name": "Romania",
+"alpha3": "ROU",
+"currency": "RON"
+},
+"RU": {
+"name": "Russia",
+"alpha3": "RUS",
+"aliases": [
+"Russian Federation"
+],
+"currency": "RUB"
+},
+"RW": {
+"name": "Rwanda",
+"alpha3": "RWA"
+},
+"SA": {
+"name": "Saudi Arabia",
+"alpha3": "SAU",
+"currency": "SAR"
+},
+"SD": {
+"name": "Sudan",
+"alpha3": "SDN"
+},
+"SN": {
+"name": "Senegal",
+"alpha3": "SEN"
+},
+"SG": {
+"name": "Singapore",
+"alpha3": "SGP",
+"currency": "SGD"
+},
+"GS": {
+"name": "South Georgia and the South Sandwich Islands",
+"alpha3": "SGS"
+},
+"SH": {
+"name": "Saint Helena, Ascension and Tristan da Cunha",
+"alpha3": "SHN"
+},
+"SJ": {
+"name": "Svalbard and Jan Mayen",
+"alpha3": "SJM"
+},
+"SB": {
+"name": "Solomon Islands",
+"alpha3": "SLB"
+},
+"SL": {
+"name": "Sierra Leone",
+"alpha3": "SLE"
+},
+"SV": {
+"name": "El Salvador",
+"alpha3": "SLV",
+"currency": "USD"
+},
+"SM": {
+"name": "San Marino",
+"alpha3": "SMR",
+"currency": "EUR"
+},
+"SO": {
+"name": "Somalia",
+"alpha3": "SOM"
+},
+"PM": {
+"name": "Saint Pierre and Miquelon",
+"alpha3": "SPM"
+},
+"RS": {
+"name": "Serbia",
+"alpha3": "SRB",
+"currency": "RSD"
+},
+"SS": {
+"name": "South Sudan",
+"alpha3": "SSD"
+},
+"ST": {
+"name": "Sao Tome and Principe",
+"alpha3": "STP"
+},
+"SR": {
+"name": "Suriname",
+"alpha3": "SUR"
+},
+"SK": {
+"name": "Slovakia",
+"alpha3": "SVK",
+"currency": "EUR"
+},
+"SI": {
+"name": "Slovenia",
+"alpha3": "SVN",
+"currency": "EUR"
+},
+"SE": {
+"name": "Sweden",
+"alpha3": "SWE",
+"aliases": [
+"Sverige"
+],
+"currency": "SEK"
+},
+"SZ": {
+"name": "Eswatini",
+"alpha3": "SWZ",
+"aliases": [
+"Swaziland"
+]
+},
+"SX": {
+"name": "Sint Maarten (Dutch part)",
+"alpha3": "SXM"
+},
+"SC": {
+"name": "Seychelles",
+"alpha3": "SYC"
+},
+"SY": {
+"name": "Syria",
+"alpha3": "SYR",
+"aliases": [
+"Syrian Arab Republic"
+]
+},
+"TC": {
+"name": "Turks and Caicos Islands",
+"alpha3": "TCA"
+},
+"TD": {
+"name": "Chad",
+"alpha3": "TCD"
+},
+"TG": {
+"name": "Togo",
+"alpha3": "TGO"
+},
+"TH": {
+"name": "Thailand",
+"alpha3": "THA",
+"currency": "THB"
+},
+"TJ": {
+"name": "Tajikistan",
+"alpha3": "TJK"
+},
+"TK": {
+"name": "Tokelau",
+"alpha3": "TKL"
+},
+"TM": {
+"name": "Turkmenistan",
+"alpha3": "TKM"
+},
+"TL": {
+"name": "Timor-Leste",
+"alpha3": "TLS",
+"aliases": [
+"East Timor"
+],
+"currency": "USD"
+},
+"TO": {
+"name": "Tonga",
+"alpha3": "TON"
+},
+"TT": {
+"name": "Trinidad and Tobago",
+"alpha3": "TTO"
+},
+"TN": {
+"name": "Tunisia",
+"alpha3": "TUN",
+"currency": "TND"
+},
+"TR": {
+"name": "Türkiye",
+"alpha3": "TUR",
+"aliases": [
+"Turkey"
+],
+"currency": "TRY"
+},
+"TV": {
+"name": "Tuvalu",
+"alpha3": "TUV"
+},
+"TW": {
+"name": "Taiwan",
+"alpha3": "TWN",
+"aliases": [
+"Taiwan, Province of China"
+],
+"currency": "TWD"
+},
+"TZ": {
+"name": "Tanzania",
+"alpha3": "TZA",
+"aliases": [
+"Tanzania, United Republic of"
+],
+"currency": "TZS"
+},
+"UG": {
+"name": "Uganda",
+"alpha3": "UGA",
+"currency": "UGX"
+},
+"UA": {
+"name": "Ukraine",
+"alpha3": "UKR",
+"currency": "UAH"
+},
+"UM": {
+"name": "United States Minor Outlying Islands",
+"alpha3": "UMI"
+},
+"UY": {
+"name": "Uruguay",
+"alpha3": "URY",
+"currency": "UYU"
+},
+"US": {
+"name": "United States",
+"alpha3": "USA",
+"aliases": [
+"America",
+"U.S.",
+"U.S.A.",
+"US of A",
+"USA",
+"United States of America"
+],
+"currency": "USD"
+},
+"UZ": {
+"name": "Uzbekistan",
+"alpha3": "UZB"
+},
+"VA": {
+"name": "Holy See",
+"alpha3": "VAT",
+"aliases": [
+"Holy See (Vatican City State)",
+"Vatican",
+"Vatican City"
+],
+"currency": "EUR"
+},
+"VC": {
+"name": "Saint Vincent and the Grenadines",
+"alpha3": "VCT"
+},
+"VE": {
+"name": "Venezuela",
+"alpha3": "VEN",
+"aliases": [
+"Venezuela, Bolivarian Republic of"
+]
+},
+"VG": {
+"name": "Virgin Islands, British",
+"alpha3": "VGB"
+},
+"VI": {
+"name": "Virgin Islands, U.S.",
+"alpha3": "VIR",
+"currency": "USD"
+},
+"VN": {
+"name": "Vietnam",
+"alpha3": "VNM",
+"aliases": [
+"Viet Nam"
+],
+"currency": "VND"
+},
+"VU": {
+"name": "Vanuatu",
+"alpha3": "VUT"
+},
+"WF": {
+"name": "Wallis and Futuna",
+"alpha3": "WLF"
+},
+"WS": {
+"name": "Samoa",
+"alpha3": "WSM"
+},
+"YE": {
+"name": "Yemen",
+"alpha3": "YEM"
+},
+"ZA": {
+"name": "South Africa",
+"alpha3": "ZAF",
+"currency": "ZAR"
+},
+"ZM": {
+"name": "Zambia",
+"alpha3": "ZMB"
+},
+"ZW": {
+"name": "Zimbabwe",
+"alpha3": "ZWE",
+"currency": "USD"
+}
+},
+"subdivisions": {
+"US": {
+"AK": "Alaska",
+"AL": "Alabama",
+"AR": "Arkansas",
+"AZ": "Arizona",
+"CA": "California",
+"CO": "Colorado",
+"CT": "Connecticut",
+"DC": "District of Columbia",
+"DE": "Delaware",
+"FL": "Florida",
+"GA": "Georgia",
+"HI": "Hawaii",
+"IA": "Iowa",
+"ID": "Idaho",
+"IL": "Illinois",
+"IN": "Indiana",
+"KS": "Kansas",
+"KY": "Kentucky",
+"LA": "Louisiana",
+"MA": "Massachusetts",
+"MD": "Maryland",
+"ME": "Maine",
+"MI": "Michigan",
+"MN": "Minnesota",
+"MO": "Missouri",
+"MS": "Mississippi",
+"MT": "Montana",
+"NC": "North Carolina",
+"ND": "North Dakota",
+"NE": "Nebraska",
+"NH": "New Hampshire",
+"NJ": "New Jersey",
+"NM": "New Mexico",
+"NV": "Nevada",
+"NY": "New York",
+"OH": "Ohio",
+"OK": "Oklahoma",
+"OR": "Oregon",
+"PA": "Pennsylvania",
+"PR": "Puerto Rico",
+"RI": "Rhode Island",
+"SC": "South Carolina",
+"SD": "South Dakota",
+"TN": "Tennessee",
+"TX": "Texas",
+"UT": "Utah",
+"VA": "Virginia",
+"VT": "Vermont",
+"WA": "Washington",
+"WI": "Wisconsin",
+"WV": "West Virginia",
+"WY": "Wyoming"
+},
+"CA": {
+"AB": "Alberta",
+"BC": "British Columbia",
+"MB": "Manitoba",
+"NB": "New Brunswick",
+"NL": "Newfoundland and Labrador",
+"NS": "Nova Scotia",
+"NT": "Northwest Territories",
+"NU": "Nunavut",
+"ON": "Ontario",
+"PE": "Prince Edward Island",
+"QC": "Quebec",
+"SK": "Saskatchewan",
+"YT": "Yukon"
+},
+"AU": {
+"ACT": "Australian Capital Territory",
+"NSW": "New South Wales",
+"NT": "Northern Territory",
+"QLD": "Queensland",
+"SA": "South Australia",
+"TAS": "Tasmania",
+"VIC": "Victoria",
+"WA": "Western Australia"
+}
+}
+}

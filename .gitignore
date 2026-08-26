@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+# Apify local runtime state
+storage/
+apify_storage/
+.env
+# Agent/tooling scratch
+.omc/

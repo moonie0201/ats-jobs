@@ -1,0 +1,5 @@
+# Synced copy of the repo-root requirements.txt (scripts/sync_actor_files.py, SPEC v2 §9.2).
+# Edit the root file, not this one.
+apify>=4.0,<5
+httpx>=0.27,<1
+defusedxml>=0.7

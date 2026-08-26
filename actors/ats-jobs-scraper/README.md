@@ -1,0 +1,278 @@
+# ATS Jobs API — Greenhouse, Lever, Ashby +3
+
+Live job postings straight from six **public ATS APIs** — Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio — normalized into one schema with structured salary. You give it company slugs or career-site URLs; it gives you clean job rows. Seven filters run **before** anything is billed, company summaries and error rows are free, and every company you query is snapshotted daily from the day we first see it. No scraping, no browsers, no proxies, no API keys.
+
+## What this ATS jobs API does
+
+- **Greenhouse** — [`boards-api.greenhouse.io/v1/boards/{slug}/jobs`](https://developers.greenhouse.io/job-board.html), with pay-transparency ranges
+- **Lever** — [`api.lever.co/v0/postings/{site}`](https://github.com/lever/postings-api), global and EU hosts
+- **Ashby** — [`api.ashbyhq.com/posting-api/job-board/{slug}`](https://developers.ashbyhq.com/docs/public-job-posting-api), with compensation
+- **Recruitee** — [`{slug}.recruitee.com/api/offers/`](https://docs.recruitee.com/reference/offers), with structured locations
+- **Rippling** — [`api.rippling.com/platform/api/ats/v1/board/{slug}/jobs`](https://developer.rippling.com/documentation/job-board-api-v2), with pay ranges from the job detail
+- **Personio** — [`{slug}.jobs.personio.de/xml?language=en`](https://developer.personio.de/docs/retrieving-open-job-positions), with seniority and years of experience
+
+Each of those is the **vendor's own public job-board API**: the same endpoint the company's careers page calls to render itself. That is a different product from career-page scraping — no headless browser, no residential proxy, no bot walls, and nothing that breaks when a marketing site is restyled. It is also different from an indexed job aggregator: what you get back is what the board serves right now, not a copy from a crawl of unknown age.
+
+Rows you are **not** charged for: company summaries, error rows, jobs removed by your filters, companies never reached because your `maxJobs` cap fired, and companies that failed.
+
+## Supported ATS platforms and their APIs
+
+| ATS | Endpoint used | Structured salary | Remote flag | Description | Seniority | Notes |
+|---|---|---|---|---|---|---|
+| Greenhouse | `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true&pay_transparency=true` | Yes (`pay_input_ranges`) | No | Inline | No | `url` is often the company's own careers domain; `team` and employment type are never reported |
+| Lever | `api.lever.co/v0/postings/{site}?mode=json` | Sometimes (`salaryRange`) | Yes (`workplaceType`) | Inline | No | Site names are **case-sensitive**; EU boards are tried automatically |
+| Ashby | `api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true` | Yes (cleanest of the six) | Yes (`isRemote`) | Inline | No | Intervals arrive as `"1 YEAR"` and are normalized to `year` |
+| Recruitee | `{slug}.recruitee.com/api/offers/` | Sometimes (`salary`) | Yes | Inline | No | Needs a per-company token from 2027-02-10 |
+| Rippling | `api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` + one detail call per job | Yes (`payRangeDetails`) | No | Detail call | No | List returns one row per job × location; we merge them by job id before you are charged |
+| Personio | `{slug}.jobs.personio.de/xml?language=en` | No (regex fallback only) | No | Inline | **Yes** | Also exports `yearsOfExperience`, both provider-sourced, never inferred |
+
+## How to use the Greenhouse, Lever and Ashby job APIs in one run
+
+1. **Paste your companies.** One per line, in any of these forms: a career-site URL (`https://job-boards.greenhouse.io/anthropic`), a prefixed slug (`lever:palantir`, `ashby:openai`, `personio:personio`), or a bare slug resolved through the built-in ATS directory.
+2. **Set your filters.** Title keywords, excluded titles, location, remote-only, departments, employment types, posted-after. They all run locally on the fetched JSON, before billing.
+3. **Run it, or schedule it.** For monitoring, turn on `onlyNewJobs` and give the task its own `stateKey`; the first run stores the baseline and later runs return only what is new.
+
+A minimal run — `["https://job-boards.greenhouse.io/anthropic", "lever:palantir"]` with `maxJobs: 50` — finishes in seconds and costs about ten cents.
+
+## Coming from fantastic-jobs, bovi or webdata_labs
+
+Saved input from another job-board Actor runs here unchanged. These input keys are accepted as aliases for `companies`, first non-empty wins, and an explicit `companies` always wins over an alias:
+
+| Their key | Here |
+|---|---|
+| `queries`, `companyUrls`, `startUrls` | `companies` |
+| `boardTokens`, `siteNames`, `jobBoardNames` | `companies` |
+| `subdomains`, `companyIdentifiers` | `companies` |
+
+**What you gain:** live boards instead of an index of unknown age; `postedAfter` and per-company filtering that run before billing; structured salary with the currency and interval separated; no contact, recruiter or candidate fields; contact redaction on by default; and a `trackedSince` date on every company row.
+
+**What you lose, stated plainly:** there is no keyword search without a company list yet. Directory mode — leave `companies` empty and fan out across our public ATS directory — arrives free in the next release, and even then it searches within our directory, not the whole internet. If "find me every Rust job anywhere" is your requirement today, an aggregator is a better fit than this Actor.
+
+## Input
+
+```json
+{
+  "companies": [
+    "https://job-boards.greenhouse.io/anthropic",
+    "lever:palantir",
+    "ashby:openai",
+    "personio:personio"
+  ],
+  "providers": ["greenhouse", "lever", "ashby", "recruitee", "rippling", "personio"],
+  "maxJobs": 1000,
+  "titleKeywords": ["engineer", "data"],
+  "excludeTitleKeywords": ["intern"],
+  "locationKeywords": ["Berlin", "Germany", "Remote"],
+  "remoteOnly": false,
+  "employmentTypes": ["full_time"],
+  "postedAfter": "7 days",
+  "includeDescription": true,
+  "descriptionFormat": "text",
+  "redactContacts": true,
+  "outputProfile": "full",
+  "onlyNewJobs": false,
+  "stateKey": "ats-jobs-state-default"
+}
+```
+
+| Field | Type | Default | Effect on cost |
+|---|---|---|---|
+| `companies` | array | required | More companies, more jobs, more charged rows |
+| `providers` | array | all six | Restricts bare slugs and directory lookups |
+| `maxJobs` | integer | 1000 | **Your main cost control.** Hard stop after this many charged rows; `0` = no limit |
+| `maxJobsPerCompany` | integer | 0 | Stops one enterprise board eating the whole budget |
+| `titleKeywords` / `excludeTitleKeywords` | array | `[]` | Filtered-out jobs are free |
+| `locationKeywords` | array | `[]` | Matches raw location text and parsed city, region, country |
+| `remoteOnly` | boolean | false | Keeps only `remote: true`; unknown remote status is dropped |
+| `departments` | array | `[]` | Substring match on department or team |
+| `employmentTypes` | array | `[]` | Unknown types are kept unless `strictEmploymentType` is on |
+| `strictEmploymentType` | boolean | false | Keeps only ATS-confirmed types |
+| `postedAfter` | string | null | `2026-08-01` or `7 days`. Jobs with no date are **kept** |
+| `includeDescription` | boolean | false | Bigger items, same price |
+| `descriptionFormat` | string | `text` | `html`, `text` or `both` |
+| `redactContacts` | boolean | true | Strips emails and phone numbers from description bodies |
+| `outputProfile` | string | `full` | `minimal` cuts token cost for AI agents |
+| `includeCompanySummary` | boolean | true | Summary rows are always free |
+| `includeRawJson` | boolean | false | Attaches the provider payload under `raw` |
+| `dedupe` | string | `id` | `content` also merges same title + company + location + requisition id |
+| `onlyNewJobs` | boolean | false | Returns only ids not in your state store |
+| `stateKey` | string | `ats-jobs-state-default` | Name of the key-value store holding seen ids |
+| `maxConcurrency` | integer | 8 | Speed only; per-host rate is capped separately |
+| `failOnAllErrors` | boolean | false | Fails the run when no company returned any job |
+
+## Output
+
+One `job` row per posting (charged), plus free `company_summary` and `error` rows.
+
+```json
+{
+  "recordType": "job",
+  "id": "greenhouse:anthropic:4019283",
+  "provider": "greenhouse",
+  "companySlug": "anthropic",
+  "company": "Anthropic",
+  "title": "Senior Backend Engineer, Inference",
+  "department": "Engineering",
+  "team": null,
+  "locationRaw": "San Francisco, CA",
+  "city": "San Francisco",
+  "region": "CA",
+  "country": "United States",
+  "countryCode": "US",
+  "remote": null,
+  "workplaceType": null,
+  "remoteSource": null,
+  "employmentType": null,
+  "employmentTypeSource": null,
+  "salaryMin": 300000,
+  "salaryMax": 405000,
+  "salaryCurrency": "USD",
+  "salaryInterval": "year",
+  "salarySource": "ats",
+  "url": "https://job-boards.greenhouse.io/anthropic/jobs/4019283",
+  "postedAt": "2026-08-19T00:00:00Z",
+  "postedAtSource": "first_published",
+  "descriptionRedacted": true,
+  "requisitionId": "REQ-4821",
+  "isNew": true,
+  "scrapedAt": "2026-08-26T03:00:12Z"
+}
+```
+
+```json
+{
+  "recordType": "company_summary",
+  "provider": "greenhouse",
+  "companySlug": "anthropic",
+  "company": "Anthropic",
+  "status": "ok",
+  "jobsFound": 533,
+  "jobsKept": 37,
+  "newJobs": 3,
+  "duplicatesDropped": 0,
+  "trackedSince": "2026-08-24",
+  "topDepartments": [{ "name": "Engineering", "count": 21 }],
+  "scrapedAt": "2026-08-26T03:00:14Z"
+}
+```
+
+```json
+{
+  "recordType": "error",
+  "provider": "lever",
+  "companySlug": "acme-that-does-not-exist",
+  "status": "not_found",
+  "error": "Lever returned 404 for both api.lever.co and api.eu.lever.co — the site name is probably wrong (Lever site names are case-sensitive)",
+  "scrapedAt": "2026-08-26T03:00:15Z"
+}
+```
+
+Two dataset views are provided: **Jobs** (spreadsheet-ready postings) and **Company summaries**. Export either as JSON, CSV, Excel or XML from the Storage tab.
+
+**What `null` means: we could not determine it.** We never guess remote status, employment type, seniority or salary. A null field is the honest answer, and it is far more useful than an invented one when you are filtering thousands of rows.
+
+## Filters, deduplication and normalization
+
+- **`remote: null`** means neither the ATS, the location text nor the title said anything. Greenhouse, Personio and Rippling have no remote flag at all, so nulls are common there. `remoteOnly` keeps only positively-confirmed remote jobs, and `remoteSource` tells you which rule fired (`ats`, `location`, `title`, `description`).
+- **Salary** is taken from the ATS's own structured fields first (`salarySource: "ats"`). Only when there is none do we run a conservative regex over the salary text (`salarySource: "parsed"`), with rejection gates for equity, bonuses, funding rounds, `401(k)`, date ranges and phone numbers. **Never an LLM.** For Greenhouse boards that publish several locale ranges, we pick the range matching the job's own country or currency rather than the first one in the list.
+- **Employment type** is normalized to `full_time`, `part_time`, `contract`, `temporary`, `internship` or `other`, and `employmentTypeSource` says whether it came from the ATS (`ats`) or was inferred from the title (`title`). `strictEmploymentType` keeps only `ats`.
+- **Dedupe by id** is always on. **Dedupe by content** additionally merges rows with the same title, company, raw location and requisition id — useful for boards that list a role once per office, but it can merge genuinely separate openings of the same role. The ids it dropped are listed in `dedupedFrom` on the surviving row, and counted in `duplicatesDropped` on the company summary. Leave it off unless you see duplicates.
+- **Locations** are parsed into city, region, country and an always-upper-case `countryCode` from a bundled country/subdivision table. No geocoding, no coordinates, no external service. Multi-location postings keep every location in a sorted `locations[]` array.
+
+## Privacy and contact redaction
+
+- The output has **no contact, recruiter or candidate fields**. Ever. There is nothing to redact in the structured part of a row because none of it is personal data.
+- Description bodies are the employer's own published advertisement text. Employer-written ads — especially German and Dutch ones on Personio and Recruitee — routinely close with a named contact person. With `redactContacts` on (the default) email addresses and phone numbers are stripped from the body before output, and `descriptionRedacted: true` records that something was removed.
+- Nothing is stored outside your own Apify account, and nothing is sent to the developer. The Actor opens no outbound connection to us and embeds no credential of any kind.
+- Your `onlyNewJobs` state lives in a key-value store in your account, under the name you choose.
+
+## Pricing
+
+**$0.002 per job row. That is the only paid event.** No start fee beyond Apify's platform default of $0.00005 per run.
+
+Free, always: company summary rows, error rows, jobs removed by your filters, companies we never reached because your `maxJobs` cap fired, and companies that failed.
+
+| Run shape | Charged rows | Cost |
+|---|---|---|
+| One company, 50 jobs (an agent query) | 50 | **$0.10** |
+| Ten companies, 1,000 jobs (a backfill) | 1,000 | **$2.00** |
+| 2,000 companies, `onlyNewJobs`, 40 new jobs (daily monitoring) | 40 | **$0.08** |
+
+That is $2 per 1,000 jobs. Set `maxJobs` to bound any run, or `ACTOR_MAX_TOTAL_CHARGE_USD` to bound the spend directly — when that limit is reached the Actor stops pushing, writes `budget_exhausted` summaries and still finishes successfully.
+
+## Monitoring new job postings (delta mode)
+
+Turn on `onlyNewJobs` and give each monitoring task its own `stateKey`. The first run stores the baseline and returns everything; later runs return only ids that were not there before, so a daily 2,000-company watch costs a few cents rather than thousands of rows. `stateRetentionDays` (default 90) forgets ids that stopped appearing, so the store cannot grow forever. The state is a key-value store **in your account**, named by you — we never see it.
+
+## Hiring history
+
+Every company you query is snapshotted daily from the day we first see it, and `trackedSince` on each company row tells you when that started. Hiring velocity, time-to-fill and removed-posting history are built from those snapshots. Ask us in 90 days how fast a company is hiring — a dedicated history Actor is on the roadmap, and the data behind it is accruing now.
+
+## Integrations: n8n, Make, Zapier, Clay, Google Sheets, Slack
+
+- **n8n** — the *Apify* node, **Run an Actor** operation, then *Get dataset items*. Schedule it and feed new jobs into your own database.
+- **Make** — the Apify *Run an Actor* module plus *Watch dataset items*.
+- **Zapier** — Apify's *Run Actor* action; map `title`, `company`, `url` and `postedAt` into your CRM.
+- **Clay** — call the Actor as an HTTP enrichment step, keyed on the company slug, to attach live openings to an account row.
+- **Google Sheets** — export the **Jobs** dataset view as CSV, or push items straight into a sheet from n8n/Make.
+- **Slack** — filter on `isNew` in delta mode and post the new rows to a channel.
+
+## For AI agents and MCP
+
+This Actor is agent-friendly by construction: limited permissions, pay-per-event with a single event, no Standby mode, typed error rows instead of stack traces, and a `minimal` output profile that returns only `title, company, locationRaw, city, countryCode, remote, url, postedAt` to keep token cost down.
+
+```json
+{
+  "companies": ["ashby:openai"],
+  "outputProfile": "minimal",
+  "maxJobs": 25,
+  "titleKeywords": ["research engineer"]
+}
+```
+
+Set `maxJobs` on every call, and set `ACTOR_MAX_TOTAL_CHARGE_USD` on the run to cap spend. Errors come back as dataset rows with `recordType: "error"` and a machine-readable `status`, so a tool call never has to parse a traceback.
+
+## Limitations you should know before you buy
+
+- Greenhouse, Personio and Rippling have **no remote flag**, so `remote` is often `null` on those boards.
+- Greenhouse's job `url` is frequently the company's own careers domain, not a `greenhouse.io` link — that is the customer's own configuration, and `applyUrl` duplicates it because Greenhouse exposes no separate apply link.
+- Greenhouse never reports `team` and never reports employment type; where you see one it was inferred from the title, and `employmentTypeSource` says so.
+- Rippling needs one detail call per job, so a `minimal` profile run leaves employment type, posting date and salary null. Rippling also omits posting dates more often than the other five.
+- Recruitee will require a per-company token from **2027-02-10**; we will add an optional token input before then.
+- Personio and Recruitee descriptions are redacted more often than US boards. That is those ads' convention — a named contact at the end — not a bug in the data.
+- Lever site names are **case-sensitive**: `palantir` works, `Palantir` returns 404.
+- **SmartRecruiters is not supported**: its governing API policy prohibits large-scale extraction and AI-driven API use. **Workable is not supported**: its documented anonymous endpoint returns zero jobs for every account we tested, so shipping it would mean shipping a provider that silently returns nothing.
+- **Workday is not in this Actor.** It uses an undocumented internal API and lives in a separate listing.
+- There is no keyword search without a company list yet; see the switching section above.
+
+## Related Actors
+
+Per-ATS listings with the same engine and the same schema — Greenhouse jobs, Lever jobs and Ashby jobs — plus a Workday listing, and a jobs-history listing built on the daily snapshots described above.
+
+## FAQ
+
+**Is this legal?** We call each vendor's own public, unauthenticated job-board API, we honour robots directives, we do not scrape career pages, we use no proxies and we touch no login-walled site. Job advertisements are published by employers for exactly this purpose. See the disclaimer below.
+
+**Do I need an API key?** No. None of the six endpoints requires a credential, and the Actor stores none.
+
+**How fresh is the data?** It is fetched live at run time. There is no index and no cache between you and the board.
+
+**How do I get the company list?** Paste career-site URLs you already have, use prefixed slugs, or open an issue on the repo to add a company to the public ATS directory.
+
+**Company not found?** Check the slug casing on Lever, and confirm the board is really hosted by that ATS. Then open an issue or a PR against the directory repo.
+
+**Why is `remote` null?** Because nothing said otherwise. See Filters, deduplication and normalization.
+
+**Can I get salaries for every job?** No. Structured pay ranges depend entirely on what the employer published. Ashby and Greenhouse boards carry them often; Personio has none at all.
+
+**How do I schedule it daily?** Use Apify Schedules, with `onlyNewJobs: true` and a dedicated `stateKey`.
+
+**How do I export to CSV?** Storage → the **Jobs** view → Export → CSV. Or `GET /datasets/{id}/items?format=csv&view=jobs`.
+
+## Support and issues
+
+Open an issue on the Actor's Issues tab or in the public GitHub repository. Every issue gets a reply within 14 days, usually within 48 hours. Bug reports that include the run id and the input are fixed fastest.
+
+## Disclaimer
+
+This Actor is unofficial. It is not affiliated with, endorsed by, or sponsored by Greenhouse Software, Lever, Ashby, Recruitee, Rippling or Personio. It uses each vendor's public job-board API to retrieve publicly published job advertisements. All trademarks belong to their respective owners.

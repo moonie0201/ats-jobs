@@ -1,0 +1,21 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: ruff check . && ruff format --check .
+      - run: |
+          python -m pytest -q -m "not live" --cov=core --cov-fail-under=90 \
+            --cov=core/normalize --cov=core/diff.py --cov=core/billing.py --cov=core/history.py
+      - run: python scripts/validate_schemas.py    # json.load every .actor/*.json, assert
+                                                   # input schema <500 kB, no default+required,
+                                                   # every field has title+description,
+                                                   # every description <500 chars,
+                                                   # no "Official" in any title/name/SEO field,
+                                                   # provider enums identical across
+                                                   #   input_schema, dataset_schema and README

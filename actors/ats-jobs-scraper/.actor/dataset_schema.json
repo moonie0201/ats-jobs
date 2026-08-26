@@ -1,0 +1,405 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "type": "object",
+    "properties": {
+      "recordType": {
+        "type": "string",
+        "title": "Record type",
+        "description": "job = a job posting (charged). company_summary and error rows are free.",
+        "enum": ["job", "company_summary", "error"],
+        "example": "job"
+      },
+      "id": {
+        "type": ["string", "null"],
+        "title": "Job ID",
+        "description": "Stable identity across runs: provider:companySlug:atsJobId",
+        "example": "greenhouse:anthropic:4019283"
+      },
+      "contentKey": {
+        "type": ["string", "null"],
+        "title": "Content key",
+        "description": "Hash of normalized title + company + raw location + requisition id. Same role listed twice shares it.",
+        "example": "8f1c2b7d9a4e6031"
+      },
+      "changeHash": {
+        "type": ["string", "null"],
+        "title": "Change hash",
+        "description": "Hash of the material fields. Changes when the posting is materially edited.",
+        "example": "a1b2c3d4"
+      },
+      "provider": {
+        "type": ["string", "null"],
+        "title": "ATS provider",
+        "description": "Which applicant tracking system the posting came from.",
+        "enum": ["greenhouse", "lever", "ashby", "recruitee", "rippling", "personio", null],
+        "example": "greenhouse"
+      },
+      "companySlug": {
+        "type": ["string", "null"],
+        "title": "Company slug",
+        "description": "The ATS board identifier used to fetch this job.",
+        "example": "anthropic"
+      },
+      "company": {
+        "type": ["string", "null"],
+        "title": "Company",
+        "description": "Company display name as reported by the ATS. Null for Lever and Ashby, whose public job-board APIs publish no company name — use companySlug there.",
+        "example": "Anthropic"
+      },
+      "companyDomain": {
+        "type": ["string", "null"],
+        "title": "Company domain",
+        "description": "Website domain from the ATS directory when known. Null when unknown.",
+        "example": "anthropic.com"
+      },
+      "title": {
+        "type": ["string", "null"],
+        "title": "Job title",
+        "description": "Job title exactly as published.",
+        "example": "Senior Backend Engineer, Inference"
+      },
+      "titleNormalized": {
+        "type": ["string", "null"],
+        "title": "Normalized title",
+        "description": "Lowercased title with trailing location, req id and remote markers stripped. Used for content dedupe.",
+        "example": "senior backend engineer, inference"
+      },
+      "department": {
+        "type": ["string", "null"],
+        "title": "Department",
+        "description": "Department as reported by the ATS.",
+        "example": "Engineering"
+      },
+      "team": {
+        "type": ["string", "null"],
+        "title": "Team",
+        "description": "Sub-team when the ATS reports one (Ashby, Lever).",
+        "example": "Payments Infrastructure"
+      },
+      "locationRaw": {
+        "type": ["string", "null"],
+        "title": "Location (raw)",
+        "description": "Untouched location string from the ATS.",
+        "example": "San Francisco, CA, United States"
+      },
+      "city": {
+        "type": ["string", "null"],
+        "title": "City",
+        "description": "Parsed city. Null when the location text has no recognizable city.",
+        "example": "San Francisco"
+      },
+      "region": {
+        "type": ["string", "null"],
+        "title": "Region / state",
+        "description": "Parsed state, province or region.",
+        "example": "CA"
+      },
+      "country": {
+        "type": ["string", "null"],
+        "title": "Country",
+        "description": "Parsed country name in English.",
+        "example": "United States"
+      },
+      "countryCode": {
+        "type": ["string", "null"],
+        "title": "Country code",
+        "description": "ISO 3166-1 alpha-2. Always upper-case, for every provider.",
+        "example": "US"
+      },
+      "locations": {
+        "type": ["array", "null"],
+        "title": "All locations",
+        "description": "Every location attached to the posting, parsed the same way as the primary one.",
+        "items": { "type": "object" }
+      },
+      "remote": {
+        "type": ["boolean", "null"],
+        "title": "Remote",
+        "description": "True only when remote could be positively determined. Null means unknown, never assumed false.",
+        "example": true
+      },
+      "workplaceType": {
+        "type": ["string", "null"],
+        "title": "Workplace type",
+        "description": "onsite, hybrid or remote when determinable.",
+        "enum": ["onsite", "hybrid", "remote", null],
+        "example": "remote"
+      },
+      "remoteSource": {
+        "type": ["string", "null"],
+        "title": "Remote detected from",
+        "description": "Which rule set the remote flag: ats, location, title, description, or null.",
+        "example": "ats"
+      },
+      "employmentType": {
+        "type": ["string", "null"],
+        "title": "Employment type",
+        "description": "Normalized employment type.",
+        "enum": ["full_time", "part_time", "contract", "temporary", "internship", "other", null],
+        "example": "full_time"
+      },
+      "employmentTypeRaw": {
+        "type": ["string", "null"],
+        "title": "Employment type (raw)",
+        "description": "Original value from the ATS before normalization.",
+        "example": "Full-time"
+      },
+      "employmentTypeSource": {
+        "type": ["string", "null"],
+        "title": "Employment type source",
+        "description": "ats = reported by the ATS itself. title = inferred from the job title. Null = unknown. strictEmploymentType keeps only ats.",
+        "enum": ["ats", "title", null],
+        "example": "ats"
+      },
+      "seniority": {
+        "type": ["string", "null"],
+        "title": "Seniority",
+        "description": "Seniority exactly as the ATS reports it. Never inferred. Personio only today.",
+        "example": "experienced"
+      },
+      "yearsOfExperience": {
+        "type": ["string", "null"],
+        "title": "Years of experience",
+        "description": "Experience band as the ATS reports it. Never inferred.",
+        "example": "7-10"
+      },
+      "salaryMin": {
+        "type": ["number", "null"],
+        "title": "Salary min",
+        "description": "Lower bound of the published pay range.",
+        "example": 180000
+      },
+      "salaryMax": {
+        "type": ["number", "null"],
+        "title": "Salary max",
+        "description": "Upper bound of the published pay range.",
+        "example": 240000
+      },
+      "salaryCurrency": {
+        "type": ["string", "null"],
+        "title": "Salary currency",
+        "description": "ISO 4217 code.",
+        "example": "USD"
+      },
+      "salaryInterval": {
+        "type": ["string", "null"],
+        "title": "Salary interval",
+        "description": "Period the range refers to.",
+        "enum": ["year", "month", "week", "day", "hour", null],
+        "example": "year"
+      },
+      "salarySource": {
+        "type": ["string", "null"],
+        "title": "Salary source",
+        "description": "ats = structured field from the ATS. parsed = extracted from the ad text by regex. Null = no salary found.",
+        "enum": ["ats", "parsed", null],
+        "example": "ats"
+      },
+      "salaryRaw": {
+        "type": ["string", "null"],
+        "title": "Salary (raw)",
+        "description": "The original salary string when the ATS provides free text.",
+        "example": "$180,000 - $240,000 per year"
+      },
+      "url": {
+        "type": ["string", "null"],
+        "title": "Job URL",
+        "description": "Public posting page.",
+        "example": "https://stripe.com/jobs/search?gh_jid=8130725"
+      },
+      "applyUrl": {
+        "type": ["string", "null"],
+        "title": "Apply URL",
+        "description": "Direct application link when the ATS exposes one, otherwise the job URL. For Greenhouse this duplicates the job URL — the ATS exposes no separate apply link.",
+        "example": "https://stripe.com/jobs/search?gh_jid=8130725"
+      },
+      "postedAt": {
+        "type": ["string", "null"],
+        "title": "Posted at",
+        "description": "ISO 8601 UTC. Null when the ATS publishes no posting date.",
+        "example": "2026-08-19T00:00:00Z"
+      },
+      "postedAtSource": {
+        "type": ["string", "null"],
+        "title": "Posted-at source",
+        "description": "Which ATS field the date came from, or null when the ATS has none.",
+        "example": "first_published"
+      },
+      "updatedAt": {
+        "type": ["string", "null"],
+        "title": "Updated at",
+        "description": "ISO 8601 UTC of the last ATS-side update, when reported.",
+        "example": "2026-08-22T11:04:00Z"
+      },
+      "descriptionHtml": {
+        "type": ["string", "null"],
+        "title": "Description (HTML)",
+        "description": "Job ad body as HTML. Present only when includeDescription is on.",
+        "example": "<p>We are hiring…</p>"
+      },
+      "descriptionText": {
+        "type": ["string", "null"],
+        "title": "Description (text)",
+        "description": "Job ad body as plain text. Present only when includeDescription is on.",
+        "example": "We are hiring…"
+      },
+      "descriptionRedacted": {
+        "type": ["boolean", "null"],
+        "title": "Description redacted",
+        "description": "True when email addresses or phone numbers were removed from the description body.",
+        "example": true
+      },
+      "requisitionId": {
+        "type": ["string", "null"],
+        "title": "Requisition ID",
+        "description": "Internal requisition number when the ATS exposes it.",
+        "example": "REQ-4821"
+      },
+      "sourceId": {
+        "type": ["string", "null"],
+        "title": "ATS job ID",
+        "description": "The provider's own id for this posting.",
+        "example": "4019283"
+      },
+      "dedupedFrom": {
+        "type": ["array", "null"],
+        "title": "Deduped from",
+        "description": "When content dedupe merged rows, the ATS job ids that were dropped into this one.",
+        "items": { "type": "string" }
+      },
+      "isNew": {
+        "type": ["boolean", "null"],
+        "title": "New since last run",
+        "description": "Only set when onlyNewJobs is enabled. True = this id was not in the stored state.",
+        "example": true
+      },
+      "firstSeenAt": {
+        "type": ["string", "null"],
+        "title": "First seen at",
+        "description": "When this Actor first saw the id under your stateKey.",
+        "example": "2026-08-26T03:00:12Z"
+      },
+      "scrapedAt": {
+        "type": ["string", "null"],
+        "title": "Fetched at",
+        "description": "ISO 8601 UTC timestamp of the fetch.",
+        "example": "2026-08-26T03:00:12Z"
+      },
+      "raw": {
+        "type": ["object", "null"],
+        "title": "Raw ATS payload",
+        "description": "Untouched provider object. Present only when includeRawJson is on."
+      },
+      "warnings": {
+        "type": ["array", "null"],
+        "title": "Warnings",
+        "description": "Non-fatal problems on this row, e.g. detail_failed when the description call failed but the job was still delivered.",
+        "items": { "type": "string" }
+      },
+      "jobsFound": {
+        "type": ["integer", "null"],
+        "title": "Jobs found",
+        "description": "company_summary only: jobs returned by the ATS before filtering.",
+        "example": 584
+      },
+      "jobsKept": {
+        "type": ["integer", "null"],
+        "title": "Jobs kept",
+        "description": "company_summary only: jobs left after filters, i.e. what was charged.",
+        "example": 37
+      },
+      "newJobs": {
+        "type": ["integer", "null"],
+        "title": "New jobs",
+        "description": "company_summary only: jobs not seen in the previous run.",
+        "example": 3
+      },
+      "duplicatesDropped": {
+        "type": ["integer", "null"],
+        "title": "Duplicates dropped",
+        "description": "company_summary only: rows merged away by content dedupe. Their ids are listed in dedupedFrom on the surviving job row.",
+        "example": 0
+      },
+      "trackedSince": {
+        "type": ["string", "null"],
+        "title": "Tracked since",
+        "description": "The date this company entered our daily snapshot history. Ask us in 90 days how fast it's hiring.",
+        "example": "2026-08-26"
+      },
+      "topDepartments": {
+        "type": ["array", "null"],
+        "title": "Top departments",
+        "description": "company_summary only: most common departments with counts.",
+        "items": { "type": "object" }
+      },
+      "status": {
+        "type": ["string", "null"],
+        "title": "Status",
+        "description": "company_summary and error rows: ok, not_found, unconfirmed, rate_limited, http_error, parse_error or timeout.",
+        "example": "ok"
+      },
+      "error": {
+        "type": ["string", "null"],
+        "title": "Error",
+        "description": "error rows only: short human-readable reason. Never charged.",
+        "example": "404 Not Found for board token 'stripee'"
+      },
+      "input": {
+        "type": ["string", "null"],
+        "title": "Input value",
+        "description": "The exact entry from your companies list that produced this row.",
+        "example": "https://job-boards.greenhouse.io/anthropic"
+      }
+    }
+  },
+  "views": {
+    "jobs": {
+      "title": "Jobs",
+      "description": "Job postings only, ready for a spreadsheet.",
+      "transformation": {
+        "fields": ["title", "company", "city", "country", "remote", "department", "employmentType", "salaryMin", "salaryMax", "salaryCurrency", "postedAt", "url", "provider"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "title": { "label": "Job title", "format": "text" },
+          "company": { "label": "Company", "format": "text" },
+          "city": { "label": "City", "format": "text" },
+          "country": { "label": "Country", "format": "text" },
+          "remote": { "label": "Remote", "format": "boolean" },
+          "department": { "label": "Department", "format": "text" },
+          "employmentType": { "label": "Type", "format": "text" },
+          "salaryMin": { "label": "Salary min", "format": "number" },
+          "salaryMax": { "label": "Salary max", "format": "number" },
+          "salaryCurrency": { "label": "Currency", "format": "text" },
+          "postedAt": { "label": "Posted", "format": "date" },
+          "url": { "label": "Open", "format": "link" },
+          "provider": { "label": "ATS", "format": "text" }
+        }
+      }
+    },
+    "companies": {
+      "title": "Company summaries",
+      "description": "One free row per company: how many jobs were found, kept and new.",
+      "transformation": {
+        "fields": ["company", "companySlug", "provider", "status", "jobsFound", "jobsKept", "newJobs", "duplicatesDropped", "trackedSince", "input"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "company": { "label": "Company", "format": "text" },
+          "companySlug": { "label": "Slug", "format": "text" },
+          "provider": { "label": "ATS", "format": "text" },
+          "status": { "label": "Status", "format": "text" },
+          "jobsFound": { "label": "Found", "format": "number" },
+          "jobsKept": { "label": "Kept", "format": "number" },
+          "newJobs": { "label": "New", "format": "number" },
+          "duplicatesDropped": { "label": "Dupes", "format": "number" },
+          "trackedSince": { "label": "Tracked since", "format": "text" },
+          "input": { "label": "Input", "format": "text" }
+        }
+      }
+    }
+  }
+}
