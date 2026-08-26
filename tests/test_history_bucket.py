@@ -36,6 +36,11 @@ class FakeStore:
         return self.values.get(key, default_value)
 
     async def set_value(self, key, value, content_type=None):
+        if value is None:
+            # How the real key-value store deletes a record, and what `prune` relies on.
+            self.values.pop(key, None)
+            self.content_types.pop(key, None)
+            return
         self.values[key] = value
         self.content_types[key] = content_type
 
@@ -234,3 +239,33 @@ async def test_jsonl_values_are_stored_as_raw_text_not_as_a_quoted_json_string()
 async def test_a_value_written_by_the_old_quoted_codec_is_still_readable():
     backing = FakeStore({events_key("2026-08-26", 0): encode(to_jsonl([{"ev": "added"}]))})
     assert await HistoryStore(backing).events("2026-08-26", 0) == [{"ev": "added"}]
+
+
+# --- retention (PRIVACY.md: 400 days) ----------------------------------------
+
+
+async def test_prune_drops_expired_days_and_keeps_everything_else():
+    store = HistoryStore(FakeStore())
+    await store.put_events("2024-01-01", 0, [{"provider": "greenhouse", "company": "old"}])
+    await store.put_counts("2024-01-01", 0, [{"provider": "greenhouse", "company": "old"}])
+    await store.put_events("2026-08-26", 0, [{"provider": "greenhouse", "company": "new"}])
+    await store.put_state(3, company_state(acme={"jobs": {}}))
+    await store.put_meta({"version": 1})
+
+    dropped = await store.prune("2026-08-26")
+
+    assert dropped == 2, "both 2024 keys, and only those"
+    assert await store.events("2024-01-01", 0) == []
+    assert await store.counts("2024-01-01", 0) == []
+    assert await store.events("2026-08-26", 0), "a day inside the window survives"
+    assert (await store.state(3))["companies"], "state buckets are never swept"
+    assert await store.meta() == {"version": 1}
+
+    assert await store.prune("2026-08-26") == 0, "idempotent"
+
+
+async def test_prune_survives_an_unusable_date():
+    store = HistoryStore(FakeStore())
+    await store.put_events("2024-01-01", 0, [{"provider": "greenhouse"}])
+    assert await store.prune("not-a-date") == 0
+    assert await store.events("2024-01-01", 0), "a bad clock must not delete history"

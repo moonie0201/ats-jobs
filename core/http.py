@@ -42,7 +42,11 @@ def checked_env(value: str, pattern: re.Pattern[str], default: str) -> str:
 
 #: `<owner>` in §5's UA string is a repo placeholder; it is filled at runtime so the
 #: header never ships a literal angle-bracket token.
-REPO_OWNER = checked_env(os.environ.get("ATS_REPO_OWNER", "ats-jobs"), _OWNER_RE, "ats-jobs")
+#: `github.com/ats-jobs` is a real GitHub organisation that is **not ours**, and it was the
+#: default here — so every request to every provider advertised a contact URL that 404s and
+#: points at a stranger. The User-Agent *is* the legal posture's identifier; it has to
+#: resolve to us.
+REPO_OWNER = checked_env(os.environ.get("ATS_REPO_OWNER", "moonie0201"), _OWNER_RE, "moonie0201")
 USER_AGENT = f"ats-jobs-scraper/0.1 (+https://github.com/{REPO_OWNER}/ats-jobs)"
 
 DEFAULT_HEADERS: dict[str, str] = {
@@ -54,12 +58,19 @@ DEFAULT_HEADERS: dict[str, str] = {
 
 #: Requests per second per host. Lever documents `Crawl-delay: 1`; everything else is
 #: undocumented and capped conservatively (§5.12).
+#:
+#: Rippling is the one provider that publishes a number, and we were 12x over it. Its
+#: `job-board-api-v2.yaml` states `Rate Limit: 100 requests every 10 minutes` — 0.1667 rps —
+#: four times, so 0.16 here. It makes Rippling boards slow, because the adapter needs one
+#: detail call per job; that is the honest price of the only documented limit any of the six
+#: publishes, and "we respect documented rate limits" is a sentence we sell against.
 DEFAULT_RATE = 2.0
 HOST_RATE_LIMITS: dict[str, float] = {
     "api.lever.co": 1.0,
     "api.eu.lever.co": 1.0,
     "jobs.lever.co": 1.0,
     "jobs.eu.lever.co": 1.0,
+    "api.rippling.com": 0.16,
 }
 
 MAX_RETRIES = 3  # 429 and 5xx
@@ -209,11 +220,17 @@ class TokenBucket:
     """One host's request allowance. Holding the lock across the sleep serialises the
     host, which is the point: a burst of 8 companies must not all fire at once."""
 
-    __slots__ = ("_lock", "_rate", "_tokens", "_updated", "_now")
+    __slots__ = ("_lock", "_rate", "_capacity", "_tokens", "_updated", "_now")
 
     def __init__(self, rate: float, *, now: Callable[[], float] = time.monotonic):
         self._rate = rate
-        self._tokens = rate
+        #: Burst capacity, and it must be at least one whole request. It used to be `rate`,
+        #: which is fine while every rate is >= 1 rps and deadlocks the moment one is not:
+        #: `acquire` waits for a whole token, the refill was capped at `rate`, and at
+        #: Rippling's documented 0.16 rps the bucket could never reach 1.0. An infinite
+        #: loop, not a slow request.
+        self._capacity = max(1.0, rate)
+        self._tokens = self._capacity
         self._now = now
         self._updated = now()
         self._lock = asyncio.Lock()
@@ -226,7 +243,9 @@ class TokenBucket:
         async with self._lock:
             while True:
                 now = self._now()
-                self._tokens = min(self._rate, self._tokens + (now - self._updated) * self._rate)
+                self._tokens = min(
+                    self._capacity, self._tokens + (now - self._updated) * self._rate
+                )
                 self._updated = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0

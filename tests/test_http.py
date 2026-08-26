@@ -234,3 +234,24 @@ async def test_a_damaged_body_still_earns_its_soft_retry(client):
     with pytest.raises(ParseError):
         await client.get_json(url, parse=parse)
     assert route.call_count == 2
+
+
+async def test_a_sub_one_rps_bucket_still_hands_out_tokens():
+    """A rate below 1 rps must throttle, not deadlock.
+
+    Burst capacity used to be the rate itself, so at Rippling's documented 0.16 rps the
+    bucket could never accumulate the whole token `acquire` waits for — every call to
+    `api.rippling.com` would have spun forever.
+    """
+    now = [0.0]
+
+    async def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    bucket = TokenBucket(0.16, now=lambda: now[0])
+
+    await bucket.acquire(sleep)  # the initial token
+    started = now[0]
+    await bucket.acquire(sleep)  # must wait ~1/0.16 s, and must return
+
+    assert now[0] - started == pytest.approx(1 / 0.16, rel=0.01)

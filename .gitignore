@@ -15,6 +15,9 @@ apify_storage/
 .env
 # Agent/tooling scratch
 .omc/
+# Internal analysis: never published, and never one `git add -A` away from being published.
+spec/
+legal/
 # Build artefacts synced into each Actor by scripts/sync_actor_files.py (SPEC v2 §9.2)
 actors/*/core/
 actors/*/requirements.txt

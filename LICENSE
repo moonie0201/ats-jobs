@@ -19,3 +19,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Scope
+
+The MIT licence above covers **this repository's source code**.
+
+`tests/fixtures/` holds payload captures from six vendors' public job-board APIs, kept for
+offline parser tests. Their advertisement prose has been replaced with synthetic filler by
+`scripts/scrub_fixtures.py`; the structural fields that remain (identifiers, titles,
+locations, dates, salary figures, department names) are facts about published job openings,
+not our work, and we grant no rights in them. Company and product names in those files are
+their owners' trademarks.
+
+`core/data/companies.seed.jsonl.gz` is a factual index of `(provider, slug)` pairs verified
+by live probe. Same position: facts, not our work, no rights granted or claimed.
+
+If you hold rights in anything in this repository and want it removed, see `TAKEDOWN.md`.
+It is honoured within 48 hours, no argument.

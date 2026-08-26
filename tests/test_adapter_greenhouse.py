@@ -132,7 +132,10 @@ def test_content_is_html_unescaped_exactly_once(anthropic):
     row = to_record(anthropic[0], Ref("greenhouse", "anthropic"), OPTIONS)
     assert row.descriptionHtml.startswith('<div class="content-intro"><h2>')
     assert "&lt;" not in row.descriptionHtml  # not unescaped twice either
-    assert row.descriptionText.startswith("About Anthropic")
+    # No assertion on the words: `scripts/scrub_fixtures.py` replaces employer prose with
+    # filler, so the contract this test guards is the markup, not the copy.
+    assert row.descriptionText and not row.descriptionText.startswith("<")
+    assert "&lt;" not in row.descriptionText
     assert "<h2>" not in row.descriptionText
 
 

@@ -9,6 +9,10 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: ruff check . && ruff format --check .
+      # No employer ad prose and no personal contact details in a public repository. The
+      # scrub is idempotent, so this fails only when a fixture arrived unscrubbed.
+      - run: python scripts/scrub_fixtures.py --selftest
+      - run: python scripts/scrub_fixtures.py --check
       - run: |
           python -m pytest -q -m "not live" --cov=core --cov-fail-under=90 \
             --cov=actors/ats-jobs-scraper/src

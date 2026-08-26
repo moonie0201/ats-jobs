@@ -1,8 +1,11 @@
 """Contact redaction (SPEC v2 §4.5.3, §15.5) — email addresses and phone numbers out.
 
 ``redactContacts`` defaults to **on** (§4.1) because German- and Dutch-language ads on
-Personio and Recruitee conventionally close with a named contact, which is where the
-no-PII claim in §15.2 would otherwise be false.
+Personio and Recruitee conventionally close with a named contact.
+
+**What this does not do:** it removes contact *channels*, not *identity*. A name in running
+prose has no pattern to match, so a named contact person survives with their address gone.
+`PRIVACY.md` says so in those words, and the Store listing must not claim otherwise.
 
 Runs **before** salary parsing, so a redacted phone number cannot be read as a pay range
 (§4.5.3). That is an improvement on the phone-number rejection gate, not a replacement.

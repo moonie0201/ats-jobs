@@ -502,6 +502,10 @@ async def finalize(run: Run) -> None:
         # overlap (H1 M4/M5).
         await run.store.put_counts(run.today, run.cfg["shard"], run.counts)
 
+    # Retention (PRIVACY.md, 400 days). Here rather than in a separate scheduled job: a
+    # sweep that needs its own schedule is a sweep that silently stops running.
+    await run.store.prune(run.today)
+
     meta = await run.store.meta()
     last_run = meta.get("last_run") if isinstance(meta.get("last_run"), dict) else {}
     last_run[str(run.cfg["shard"])] = run.today

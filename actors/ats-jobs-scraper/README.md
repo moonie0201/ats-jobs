@@ -1,8 +1,14 @@
 # ATS Jobs API — Greenhouse, Lever, Ashby +3
 
+> **Unofficial.** Not affiliated with, endorsed by or sponsored by Greenhouse Software,
+> Lever, Ashby, Recruitee, Rippling or Personio. It calls each vendor's own public
+> job-board API. All trademarks belong to their owners.
+> **Removal requests:** [TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md)
+> — honoured in 48 hours. **Privacy:** [PRIVACY.md](https://github.com/moonie0201/ats-jobs/blob/main/PRIVACY.md).
+
 Live job postings straight from six **public ATS APIs** — Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio — normalized into one schema with structured salary. You give it company slugs or career-site URLs; it gives you clean job rows. Seven filters run **before** anything is billed, company summaries and error rows are free, and `onlyNewJobs` keeps a per-company baseline in your own key-value store so a monitoring run returns only what changed. No scraping, no browsers, no proxies, no API keys.
 
-**We index nothing.** There is no "jobs in our database" number here because there is no database — every row in your run was fetched from the employer's own board seconds earlier. And because you are billed only for job rows you actually receive, a 2,000-company daily watch with `onlyNewJobs` costs about **8 cents a run**.
+**We index nothing you buy.** There is no "jobs in our database" number here because there is no job index between you and the board — every row in your run was fetched from the employer's own board seconds earlier, never served from a crawl of unknown age. (We do keep a private daily record of *which roles were open where*, holding titles, locations and dates and no descriptions, salaries or contacts, to build hiring-history products later. It never touches your run. See [Hiring history](#hiring-history).) And because you are billed only for job rows you actually receive, a 2,000-company daily watch with `onlyNewJobs` costs about **8 cents a run**.
 
 **What this is not:** no keyword search without a company list (directory mode ships next); `remote` is often `null` on Greenhouse, Personio and Rippling because the board never said; not an aggregator — six ATS platforms, live, and nothing else.
 
@@ -188,9 +194,10 @@ Two dataset views are provided: **Jobs** (spreadsheet-ready postings) and **Comp
 ## Privacy and contact redaction
 
 - The output has **no contact, recruiter or candidate fields**. Ever. There is nothing to redact in the structured part of a row because none of it is personal data. `includeRawJson` is held to the same rule: contact-shaped keys and ad bodies are stripped from `raw`, and what is left is run through the same redaction as the description.
-- Description bodies are the employer's own published advertisement text. Employer-written ads — especially German and Dutch ones on Personio and Recruitee — routinely close with a named contact person. With `redactContacts` on (the default) email addresses and phone numbers are stripped from the body before output, and `descriptionRedacted: true` records that something was removed.
+- Description bodies are the employer's own published advertisement text. Employer-written ads — especially German and Dutch ones on Personio and Recruitee — routinely close with a named contact person. With `redactContacts` on (the default) email addresses and phone numbers are stripped from the body before output, and `descriptionRedacted: true` records that something was removed. **What that does not do:** it removes contact *channels*, not *identity* — a name in running prose has no pattern to match, so the person's name can survive with their address gone. `includeDescription` ships **off**, so a default run carries no ad body at all; if you turn it on, you are the controller of what lands in your dataset. Full notice: [PRIVACY.md](https://github.com/moonie0201/ats-jobs/blob/main/PRIVACY.md).
 - Nothing is stored outside your own Apify account, and nothing is sent to the developer. The Actor opens no outbound connection to us and embeds no credential of any kind.
 - Your `onlyNewJobs` state lives in a key-value store in your account, under the name you choose.
+- **Erasure, objection and takedown** are honoured unconditionally within 48 hours, for rightholders and for people named in an ad alike — [TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md), [PRIVACY.md](https://github.com/moonie0201/ats-jobs/blob/main/PRIVACY.md). Open an issue saying only `private request` if you would rather not post details in public.
 
 ## Pricing
 
@@ -218,7 +225,9 @@ Turn on `onlyNewJobs` and give each monitoring task its own `stateKey`. The firs
 
 ## Hiring history
 
-Turn on `onlyNewJobs` and the Actor keeps a baseline of seen job ids and per-company first-seen dates in a named key-value store **in your own account**; `trackedSince` on each company row is the date that company first appeared under your `stateKey`. Nothing is snapshotted on our side today. Hiring velocity, time-to-fill and removed-posting history need a dedicated history Actor built on daily snapshots — that is on the roadmap, not in this Actor.
+Turn on `onlyNewJobs` and the Actor keeps a baseline of seen job ids and per-company first-seen dates in a named key-value store **in your own account**; `trackedSince` on each company row is the date that company first appeared under your `stateKey`.
+
+**What we run on our side, stated plainly:** a separate private Actor takes a daily snapshot of which jobs are open at the companies in our public directory, so that hiring-velocity and time-to-fill products can exist later. It stores job id, title, location, department, remote flag, url and dates — **never** descriptions, salaries, recruiter names or contact details. It is retained for 400 days and then deleted automatically ([PRIVACY.md](https://github.com/moonie0201/ats-jobs/blob/main/PRIVACY.md)). It reads nothing from your runs, your account or your inputs, and it produces nothing this Actor delivers. If you want your company out of it, [TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md) — 48 hours, no questions.
 
 ## Integrations: n8n, Make, Zapier, Clay, Google Sheets, Slack
 
@@ -249,7 +258,7 @@ Set `maxJobs` on every call, and set `ACTOR_MAX_TOTAL_CHARGE_USD` on the run to 
 - Greenhouse, Personio and Rippling have **no remote flag**, so `remote` is often `null` on those boards.
 - Greenhouse's job `url` is frequently the company's own careers domain, not a `greenhouse.io` link — that is the customer's own configuration, and `applyUrl` duplicates it because Greenhouse exposes no separate apply link.
 - Greenhouse never reports `team` and never reports employment type; where you see one it was inferred from the title, and `employmentTypeSource` says so.
-- Rippling needs one detail call per job, so a `minimal` profile run leaves employment type, posting date and salary null. Rippling also omits posting dates more often than the other five.
+- **Rippling is slow, on purpose.** Its API documentation states a limit of 100 requests per 10 minutes, so we cap `api.rippling.com` at 0.16 requests/second and the adapter needs one detail call per job. A 50-job Rippling board therefore takes minutes, not seconds. The other five providers are unaffected. Rippling also needs that detail call for employment type, posting date and salary, so a `minimal` profile run leaves them null, and it omits posting dates more often than the other five.
 - Recruitee will require a per-company token from **2027-02-10**; we will add an optional token input before then.
 - Personio and Recruitee descriptions are redacted more often than US boards. That is those ads' convention — a named contact at the end — not a bug in the data.
 - Lever site names are **case-sensitive**: `palantir` works, `Palantir` returns 404.
@@ -263,7 +272,9 @@ Per-ATS listings with the same engine and the same schema — Greenhouse jobs, L
 
 ## FAQ
 
-**Is this legal?** We call each vendor's own public, unauthenticated job-board API, we honour robots directives, we do not scrape career pages, we use no proxies and we touch no login-walled site. Job advertisements are published by employers for exactly this purpose. See the disclaimer below.
+**Is this legal?** We call each vendor's own public, unauthenticated job-board API, we honour robots directives and documented rate limits, we do not scrape career pages, we use no proxies and we touch no login-walled site — so there is no access-control question here.
+
+Copyright is a separate question and we will not pretend otherwise: **the description body stays the employer's copyrighted text.** Publishing an ad does not license anyone to redistribute it, and no ATS vendor holds a right it could pass on. That is why `includeDescription` ships **off**, why the structured fields — title, location, salary, dates, department, apply url — are facts and carry no such issue, and why any rightholder who wants their text out of this product gets it out in 48 hours with no argument: [TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md). If you plan to republish description bodies at scale, that is your call to make with the employer, not ours to license to you.
 
 **Do I need an API key?** No. None of the six endpoints requires a credential, and the Actor stores none.
 
@@ -283,8 +294,18 @@ Per-ATS listings with the same engine and the same schema — Greenhouse jobs, L
 
 ## Support and issues
 
-Open an issue on the Actor's Issues tab or in the public GitHub repository. Every issue gets a reply within 14 days, usually within 48 hours. Bug reports that include the run id and the input are fixed fastest.
+Open an issue on the Actor's Issues tab or in the public GitHub repository at
+<https://github.com/moonie0201/ats-jobs>. Every issue gets a reply within 14 days, usually
+within 48 hours. Bug reports that include the run id and the input are fixed fastest.
+
+**Removal, takedown, copyright or privacy requests jump the queue and are answered within 48
+hours:** [TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md) ·
+[PRIVACY.md](https://github.com/moonie0201/ats-jobs/blob/main/PRIVACY.md).
 
 ## Disclaimer
 
 This Actor is unofficial. It is not affiliated with, endorsed by, or sponsored by Greenhouse Software, Lever, Ashby, Recruitee, Rippling or Personio. It uses each vendor's public job-board API to retrieve publicly published job advertisements. All trademarks belong to their respective owners.
+
+Job advertisement text remains the copyright of the employer that wrote it. The structured
+fields this Actor produces are factual. Removal requests are honoured within 48 hours:
+[TAKEDOWN.md](https://github.com/moonie0201/ats-jobs/blob/main/TAKEDOWN.md).

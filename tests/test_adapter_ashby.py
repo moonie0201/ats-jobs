@@ -218,7 +218,9 @@ def test_description_comes_from_the_list_call_no_detail_request():
     """§5.3: `needs_detail_call` is False — `descriptionHtml`/`descriptionPlain` are inline."""
     assert SPEC.needs_detail_call is False
     row = records("openai", OPENAI)[0]
-    assert row.descriptionText and row.descriptionText.startswith("ABOUT THE TEAM")
+    # The fixture's prose is scrubbed (`scripts/scrub_fixtures.py`), so this asserts that a
+    # body arrived from the *list* payload at all, not what it says.
+    assert row.descriptionText and "<" not in row.descriptionText
     assert row.descriptionHtml and row.descriptionHtml.startswith("<h3>")
     assert row.descriptionRedacted is False
 

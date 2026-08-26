@@ -43,6 +43,7 @@ import logging
 import random
 import re
 import sys
+import tempfile
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -79,6 +80,24 @@ PROVIDERS: tuple[str, ...] = (
 
 SEED_PATH = REPO / "core" / "data" / "companies.seed.jsonl.gz"
 PUBLIC_PATH = REPO.parent / "ats-directory" / "companies.jsonl"
+
+#: One `provider:slug` per line, `#` comments allowed. This is the mechanism behind the
+#: 48-hour removal promise in `TAKEDOWN.md`: applied in :func:`write_outputs`, so a blocked
+#: company cannot come back through a rebuild, and cannot survive in the seed file baked
+#: into the Actor image after being dropped from the public projection.
+BLOCKLIST_PATH = PUBLIC_PATH.with_name("blocklist.txt")
+
+#: Providers never published in either output file, whatever a probe found.
+#:
+#: **personio** — Personio's Marketplace Terms of Service §4.2 prohibits "creating publicly
+#: available directories based on the information retrieved from the API", and its API
+#: Security & Use Policy extends §4.2 to a party who has not signed the Marketplace
+#: agreement. Whether that chain binds a caller who holds no credential and fetches a tenant
+#: career-page XML feed is genuinely arguable — see `spec/COMPLIANCE.md` L1-P1. We are not
+#: taking the argument: a published list of Personio-hosted companies is the artefact the
+#: clause names almost word for word, the rows buy us little, and the Personio adapter still
+#: works on a slug the buyer supplies. Removed rather than defended.
+PUBLISH_DENY_PROVIDERS: frozenset[str] = frozenset({"personio"})
 
 #: §6.6: the public repo publishes only these, "every field of which is the output of our
 #: own live validation probe". `job_count`, `first_seen`, `checked_at` and `dead_since`
@@ -177,6 +196,13 @@ WAYBACK_QUERIES: dict[str, tuple[WaybackQuery, ...]] = {
 DEFAULT_PREFIXES = ("a", "m", "e", "s", "i", "c", "p", "g", "t", "b", "l", "r", "1")
 
 
+#: Per-host discovery overrides. `web.archive.org` is a donation-funded non-profit whose
+#: Terms of Use grant access "for scholarship and research purposes only" and whose realistic
+#: response to a commercial bulk client is an IP block. Half the default rate and a tenth of
+#: the rows (`--wayback-rows`) is cheap insurance and costs us a slower quarterly rebuild.
+DISCOVERY_RATE_LIMITS: dict[str, float] = {"web.archive.org": 0.5}
+
+
 class PoliteClient:
     """Discovery transport: 1 rps per host, small global concurrency, honest UA."""
 
@@ -188,7 +214,8 @@ class PoliteClient:
 
     async def get(self, url: str, **kwargs: Any) -> httpx.Response | None:
         host = (httpx.URL(url).host or "").lower()
-        bucket = self._buckets.setdefault(host, TokenBucket(self._rate))
+        rate = min(self._rate, DISCOVERY_RATE_LIMITS.get(host, self._rate))
+        bucket = self._buckets.setdefault(host, TokenBucket(rate))
         async with self._sem:
             await bucket.acquire()
             try:
@@ -611,9 +638,38 @@ def gzip_bytes(blob: bytes) -> bytes:
     return buf.getvalue()
 
 
+def read_blocklist(path: Path = BLOCKLIST_PATH) -> set[tuple[str, str]]:
+    """`provider:slug` per line. A missing file is an empty blocklist, not an error."""
+    if not path.exists():
+        return set()
+    blocked = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        provider, _, slug = line.partition(":")
+        if provider and slug:
+            blocked.add((provider.strip().lower(), slug.strip()))
+    return blocked
+
+
+def publishable(rows: list[dict[str, Any]], blocked: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Rows minus the denied providers and the blocklist. Applied to **both** output files.
+
+    Both, deliberately: dropping a company from the public projection while leaving it in
+    `companies.seed.jsonl.gz` leaves the same list published in the same public repository
+    one directory over, and a later rebuild would restore it.
+    """
+    return [
+        r
+        for r in rows
+        if r.get("provider") not in PUBLISH_DENY_PROVIDERS
+        and (r.get("provider"), r.get("slug")) not in blocked
+    ]
+
+
 def write_outputs(rows: list[dict[str, Any]], seed: Path, public: Path) -> None:
     seed.parent.mkdir(parents=True, exist_ok=True)
     public.parent.mkdir(parents=True, exist_ok=True)
+    rows = publishable(rows, read_blocklist(public.with_name("blocklist.txt")))
     seed.write_bytes(gzip_bytes(to_jsonl(rows)))
     public_blob = to_jsonl(rows, PUBLIC_FIELDS)
     public.write_bytes(public_blob)
@@ -893,6 +949,27 @@ def selfcheck() -> int:
         (r["provider"], r["slug"].casefold()) for r in rows
     ), "rows must be sorted for stable diffs"
 
+    # Nothing denied or blocklisted reaches either file. The seed is checked too: it lives
+    # in the same public repository as the code, so "removed from the public file" has to
+    # mean removed from both or it means nothing.
+    denied = [
+        {"provider": "personio", "slug": "acme", "status": "ok"},
+        {"provider": "greenhouse", "slug": "blocked-co", "status": "ok"},
+        {"provider": "greenhouse", "slug": "kept", "status": "ok"},
+    ]
+    survivors = publishable(denied, {("greenhouse", "blocked-co")})
+    assert [r["slug"] for r in survivors] == ["kept"], survivors
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pub = Path(tmp) / "companies.jsonl"
+        pub.with_name("blocklist.txt").write_text("# comment\ngreenhouse:blocked-co\n\n")
+        write_outputs(denied, Path(tmp) / "seed.jsonl.gz", pub)
+        assert "personio" not in pub.read_text() and "blocked-co" not in pub.read_text()
+        seed_text = gzip.decompress((Path(tmp) / "seed.jsonl.gz").read_bytes()).decode()
+        assert "personio" not in seed_text and "blocked-co" not in seed_text, seed_text
+        assert "kept" in seed_text
+    assert read_blocklist(Path(tmp) / "nope.txt") == set(), "a missing blocklist is empty"
+
     public = json.loads(to_jsonl(rows, PUBLIC_FIELDS).splitlines()[0])
     assert set(public) == set(PUBLIC_FIELDS), public
     assert "job_count" not in public and "first_seen" not in public, "§6.6 privacy projection"
@@ -916,7 +993,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rate", type=float, default=1.0, help="§6.3: requests/second per host")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--prefixes", default="".join(DEFAULT_PREFIXES))
-    parser.add_argument("--wayback-rows", type=int, default=40000)
+    # 5,000, not 40,000. The Internet Archive's Terms of Use grant access "for scholarship
+    # and research purposes only"; a commercial pipeline is outside that on the plain words,
+    # and the realistic remedy is an IP block. Cheap insurance: take a tenth as much, and
+    # credit them in the directory README as the ToU asks.
+    parser.add_argument("--wayback-rows", type=int, default=5000)
     parser.add_argument("--no-wayback", action="store_true", help="cheap sources only")
     parser.add_argument("--dry-run", action="store_true", help="probe and report, write nothing")
     parser.add_argument("--out-seed", type=Path, default=SEED_PATH)

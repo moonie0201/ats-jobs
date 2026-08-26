@@ -34,10 +34,14 @@ from typing import Any
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from scrub_fixtures import main as scrub_fixtures  # noqa: E402 — same directory, no package
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
 
-USER_AGENT = "ats-jobs-scraper/0.1 (+https://github.com/ats-jobs/ats-jobs)"
+USER_AGENT = "ats-jobs-scraper/0.1 (+https://github.com/moonie0201/ats-jobs)"
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"}
 TIMEOUT = 60.0
 #: Politeness between requests; every provider's cap is 2 rps or unknown (§5.12).
@@ -255,6 +259,11 @@ def main(argv: list[str] | None = None) -> int:
                 refresh_rippling_details(client, problems)
             except httpx.HTTPError as exc:
                 problems.append(f"rippling detail: {type(exc).__name__} — {exc}")
+
+    # A freshly downloaded payload carries the employer's ad copy and, on Recruitee and
+    # Personio, named contacts. This repository is public, so the prose never gets to reach
+    # a commit: the scrub runs here rather than in a step someone can forget.
+    scrub_fixtures([])
 
     for problem in problems:
         print(f"PROBLEM {problem}", file=sys.stderr)

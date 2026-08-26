@@ -76,11 +76,25 @@ Rippling is fetched **list-only**: its detail call is mandatory even without des
 so a 50-job board would be 51 requests. `employment_type` and `createdOn` are null for
 Rippling here, by design.
 
+## Retention
+
+`core.history.HistoryStore.prune(today)` runs inside `finalize()` on **every** run and
+deletes every `events.{day}.{shard}` and `counts.{day}.{shard}` older than
+`RETENTION_DAYS` (400). State buckets are not swept — they hold one row per live company,
+not a growing history. 400 days is over a year, so year-on-year comparisons still work, and
+it is finite, which is the point: `PRIVACY.md` publishes this number and "indefinite" is not
+a retention period anyone can defend.
+
+Deletion is `set_value(key, None)`, the key-value store's own remove. Not on a separate
+schedule: a sweep that needs its own schedule is a sweep that silently stops running.
+
 ## Takedown
 
 `core.history.HistoryStore.purge(provider, company=None, keys=[...])` drops a company (or
-a whole provider) from every state bucket and rewrites the affected event files — §15.1
-policy 4 promises 48 hours, and disabling an adapter only stops *collection*.
+a whole provider) from every state bucket and rewrites the affected event files. Disabling
+an adapter only stops *collection*, so this is the thing that actually removes what is
+already stored. The public promise is 48 hours — see `TAKEDOWN.md` in the repository root
+for the route people use to invoke it.
 
 ## Cost (§7.7)
 

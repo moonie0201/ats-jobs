@@ -29,6 +29,7 @@ import gzip
 import json
 import logging
 import zlib
+from datetime import date, timedelta
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,13 @@ MAX_VALUE_BYTES = 8 * 1024 * 1024
 
 WATCHLIST_KEY = "watchlist"
 META_KEY = "meta"
+
+#: How long a day of `events`/`counts` is kept before :meth:`HistoryStore.prune` deletes it.
+#: Over a year, so year-on-year hiring comparisons still work, and finite, so "we keep it
+#: forever" stops being true — an indefinite retention period is one we cannot defend and
+#: `PRIVACY.md` now states this number to the world. Current-state buckets are not swept:
+#: they hold one row per live company, not a growing history.
+RETENTION_DAYS = 400
 
 
 class KeyValueStoreLike(Protocol):
@@ -276,6 +284,36 @@ class HistoryStore:
 
     async def put_meta(self, value: dict[str, Any]) -> int:
         return await self.put(META_KEY, value)
+
+    # --- retention (PRIVACY.md: 400 days) ---
+
+    async def prune(self, today: str, *, retention_days: int = RETENTION_DAYS) -> int:
+        """Delete every `events.{day}.{shard}` and `counts.{day}.{shard}` older than the
+        window. Returns how many keys went.
+
+        Deletion is `set_value(key, None)`, which is how the Apify key-value store removes a
+        record. Cheap enough to run on every finalize: one `iterate_keys` plus one delete
+        per expired day, and after the first sweep there is at most one expired day left.
+        """
+        try:
+            cutoff = (date.fromisoformat(today) - timedelta(days=retention_days)).isoformat()
+        except ValueError:
+            logger.warning("prune: unusable date %r; skipping the sweep", today)
+            return 0
+
+        dropped = 0
+        for key in await self.keys():
+            kind, _, rest = key.partition(SEP)
+            if kind not in ("events", "counts"):
+                continue
+            day = rest.partition(SEP)[0]
+            if len(day) == 10 and day < cutoff:
+                await self._store.set_value(key, None)
+                self.writes += 1
+                dropped += 1
+        if dropped:
+            logger.info("pruned %d history key(s) older than %s", dropped, cutoff)
+        return dropped
 
     # --- takedown (§7.3, §15.1 policy 4: honoured within 48 hours) ---
 

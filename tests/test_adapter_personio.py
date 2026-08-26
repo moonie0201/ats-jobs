@@ -105,7 +105,9 @@ def test_description_sections_are_joined_under_h3_headers():
         "<h3>The Role: How you'll make an impact at Personio</h3>"
     )
     assert row.descriptionHtml.count("<h3>") == 4
-    assert "Data Platform team is on a mission" in row.descriptionText
+    # Four section bodies, not four bare headings — the fixture's prose is scrubbed
+    # (`scripts/scrub_fixtures.py`), so this measures bulk rather than quoting it.
+    assert len(row.descriptionText) > 1000
     assert row.descriptionRedacted is False
 
 

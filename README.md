@@ -15,11 +15,21 @@ determined the field is `null`; nothing is guessed.
 | `core/` | all the logic: `adapters/`, `normalize/`, resolve, filters, dedupe, state, billing |
 | `core/models.py` | `Ref`, `Meta`, `Location`, `Salary`, `JobRecord`, `ProviderSpec` |
 | `actors/<name>/` | one thin Actor each: `.actor/*.json`, `src/main.py`, `Dockerfile` |
-| `tests/` | offline unit tests over committed real payloads in `tests/fixtures/` |
-| `scripts/` | fixture refresh, actor file sync, schema lint, directory build, launch KPIs |
-| `legal/` | dated captures of the vendor statements the adapters rely on |
+| `tests/` | offline unit tests over committed provider payloads in `tests/fixtures/` |
+| `scripts/` | fixture refresh, fixture scrub, actor file sync, schema lint, directory build, launch KPIs |
 
-Specification: `spec/SPEC_v2.md` — it is the authority, this file is a signpost.
+Specification: `spec/SPEC_v2.md` — it is the authority, this file is a signpost. It is not
+in this repository and is not published.
+
+## Test fixtures carry no employer prose
+
+`tests/fixtures/` holds captures from the six vendors' public job-board APIs. The
+advertisement bodies in them are replaced with synthetic filler by
+`scripts/scrub_fixtures.py`, which preserves every tag, entity, CDATA wrapper and salary
+figure and throws the words away — the parsers are tested on shape, never on copy. A job ad
+is the employer's copyrighted work and this repository is public, so the raw text has no
+business being in it. `scripts/refresh_fixtures.py` runs the scrub itself after every
+download, and CI fails if any fixture arrives unscrubbed.
 
 ## Development
 
@@ -59,12 +69,21 @@ number.
 The launch copy those KPIs are measuring — channel-by-channel posts and the day-by-day
 checklist — lives in `spec/LAUNCH.md`.
 
+## Removal, takedown and privacy
+
+[`TAKEDOWN.md`](TAKEDOWN.md) — copyright, provider and directory removal. 48 hours, no
+argument, no justification asked for.
+[`PRIVACY.md`](PRIVACY.md) — what is held, what is not, and unconditional erasure and
+objection.
+
 ## License
 
-MIT — see `LICENSE`.
+MIT for the source code — see [`LICENSE`](LICENSE), including the scope note that says what
+the MIT grant does **not** cover (`tests/fixtures/`, `core/data/companies.seed.jsonl.gz`).
 
 ## Disclaimer
 
 Unofficial. Not affiliated with, sponsored by or endorsed by Greenhouse, Lever, Ashby,
-Recruitee, Rippling, Personio or any other applicant tracking system. All product names
-and trademarks belong to their respective owners.
+Recruitee, Rippling, Personio, Apify or any other applicant tracking system. All product
+names and trademarks belong to their respective owners. Job advertisement text remains the
+copyright of the employer who wrote it.
