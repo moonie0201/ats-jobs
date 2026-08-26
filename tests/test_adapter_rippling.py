@@ -436,3 +436,36 @@ async def test_empty_board_and_junk_rows_yield_no_records():
     grouped, charged or linked — both are zero records, not a crash."""
     assert await _fetch("acme", [], {}) == []
     assert await _fetch("acme", [None, "x", {}, {"name": "no uuid"}], {}) == []
+
+
+# --- V1 H1: a board too big for the budget delivers rows, not a timeout ---------------
+
+
+async def test_detail_calls_stop_at_the_deadline_and_the_jobs_still_ship(fixture, monkeypatch):
+    """The detail call is mandatory (§5.7) and every one queues on the same 2 rps bucket,
+    so a 374-uuid board needs ~187 s — past `COMPANY_BUDGET_SECS`. The cancellation used
+    to cost the buyer the *entire* company; now the overflow ships list-only with
+    `detail_failed`, which §5.12 defines as a delivered row (V1 H1)."""
+    rows, details = _board(fixture, "rippling")
+    calls: list[str] = []
+    client = _client("rippling", rows, details, calls=calls)
+    monkeypatch.setattr(adapter, "DETAIL_BATCH", 2)
+
+    # A deadline already in the past: no detail call may be issued at all.
+    records = await adapter.fetch(_ref("rippling"), client, {"deadline": -1.0})
+
+    assert len(records) == len({r["uuid"] for r in rows})
+    base = BASE.format(slug="rippling")
+    assert [call for call in calls if call.startswith(base + "/")] == [], calls
+    assert all("detail_failed" in record.warnings for record in records)
+    assert all(record.title for record in records), "list-only rows are still real rows"
+
+
+async def test_without_a_deadline_every_detail_is_fetched(fixture):
+    rows, details = _board(fixture, "rippling")
+    calls: list[str] = []
+    client = _client("rippling", rows, details, calls=calls)
+    records = await adapter.fetch(_ref("rippling"), client, {})
+    uuids = {r["uuid"] for r in rows}
+    assert len([c for c in calls if c.rsplit("/", 1)[-1] in uuids]) == len(uuids)
+    assert len(records) == len(uuids)

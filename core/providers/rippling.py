@@ -22,12 +22,14 @@ redaction, identity — is left to :func:`core.normalize.record.build_job_record
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from core.http import Client, FetchError, ParseError
 from core.models import JobRecord, ProviderSpec, Ref
 from core.normalize.location import parse_location
 from core.normalize.record import build_job_record
+from core.normalize.redact import strip_contact_fields
 
 SPEC = ProviderSpec(name="rippling", host_rate_limit=2.0, needs_detail_call=True)
 
@@ -136,7 +138,11 @@ def to_record(
         options,
     )
     if record.raw is not None:
-        record.raw = job  # the payload as the provider sent it, without the pay aliases
+        # The provider's own keys, without the pay aliases — scrubbed, or this line would
+        # silently undo §15.2 (V1 B1, V3 S4).
+        record.raw = strip_contact_fields(
+            job, redact=bool((options or {}).get("redactContacts", True))
+        )
     return record
 
 
@@ -151,6 +157,32 @@ async def _detail(client: Client, list_url: str, uuid: str) -> dict[str, Any] | 
     except FetchError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+#: Details are issued in batches so the per-company deadline can be consulted between
+#: them. Every request queues on the same 2 rps `api.rippling.com` bucket, so a 374-job
+#: board needs ~187 s of detail calls — past the shell's 120 s budget, which used to
+#: cancel the whole company and deliver *nothing* (V1 H1). Past the deadline the
+#: remaining jobs are emitted list-only with a `detail_failed` warning, which §5.12
+#: already defines as a delivered, chargeable row.
+DETAIL_BATCH = 32
+
+
+async def _details(
+    client: Client,
+    url: str,
+    uuids: list[str],
+    options: dict[str, Any],
+) -> list[dict[str, Any] | None]:
+    deadline = options.get("deadline")
+    out: list[dict[str, Any] | None] = []
+    for start in range(0, len(uuids), DETAIL_BATCH):
+        if deadline is not None and time.monotonic() > deadline:
+            out.extend([None] * (len(uuids) - len(out)))
+            break
+        batch = uuids[start : start + DETAIL_BATCH]
+        out.extend(await asyncio.gather(*(_detail(client, url, uuid) for uuid in batch)))
+    return out
 
 
 async def fetch(
@@ -180,9 +212,7 @@ async def fetch(
 
     list_only = bool(options.get("listOnly")) or options.get("outputProfile") == "minimal"
     details: list[dict[str, Any] | None] = (
-        [None] * len(groups)
-        if list_only
-        else list(await asyncio.gather(*(_detail(client, url, uuid) for uuid in groups)))
+        [None] * len(groups) if list_only else await _details(client, url, list(groups), options)
     )
 
     records: list[JobRecord] = []

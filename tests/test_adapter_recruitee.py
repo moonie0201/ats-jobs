@@ -214,14 +214,17 @@ def test_ids_are_stable_and_unique_across_a_board(fixture):
     assert [job.changeHash for job in jobs] == [j.changeHash for j in records(fixture, "vandebron")]
 
 
-def test_raw_json_is_the_untouched_offer(fixture):
-    """The pay-blanking in :func:`_pay_job` must not reach ``includeRawJson`` output."""
+def test_raw_json_keeps_the_offers_own_pay_object_but_never_its_contacts(fixture):
+    """The pay-blanking in :func:`_pay_job` must not reach ``includeRawJson`` output —
+    and the offer's contact fields must not reach it either (§15.2, V1 B1, V3 S4)."""
     payload = fixture("recruitee", "nmbrs.json")
     offer = payload["offers"][0]
+    assert offer["mailbox_email"], "fixture precondition: every live offer carries one"
     job = to_record(offer, ref("nmbrs"), {**OPTIONS, "includeRawJson": True})
 
-    assert job.raw == offer
     assert job.raw["salary"] == {"max": None, "min": None, "period": None, "currency": None}
+    assert "mailbox_email" not in job.raw
+    assert job.raw["id"] == offer["id"] and job.raw["title"] == offer["title"]
 
 
 # --- §10.1 test_adapters_empty_objects --------------------------------------------------

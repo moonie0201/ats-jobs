@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from core.state import STATE_VALUE_KEY, SeenState
@@ -137,3 +138,28 @@ async def test_state_without_a_store_is_a_working_no_op():
     state.mark("a", now=NOW)
     await state.save()
     assert state.seen.keys() == {"a"}
+
+
+# --- V1 H2 / V3 S10 -------------------------------------------------------------------
+
+
+async def test_load_directory_offers_the_http_sources_only_with_a_client():
+    """The two CDN sources are the only ones a customer account can actually reach; with
+    no client they were silently dropped and the directory was always empty (V1 H2)."""
+    from core.directory import load_directory
+
+    asked: list[str] = []
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            asked.append(url)
+            raise RuntimeError("offline")
+
+    async def no_kv(*, name):
+        raise RuntimeError("no store")
+
+    empty = await load_directory(None, kv_opener=no_kv, baked_path=Path("/nonexistent"))
+    assert asked == [] and len(empty) == 0
+
+    await load_directory(FakeClient(), kv_opener=no_kv, baked_path=Path("/nonexistent"))
+    assert len(asked) == 2 and all(url.startswith("https://") for url in asked)

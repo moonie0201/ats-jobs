@@ -136,18 +136,65 @@ def _lever(job: dict[str, Any]) -> Salary | None:
     )
 
 
+#: §4.5.3's own year/hour rejection bounds, reused to test whether a Greenhouse range's
+#: *label* is believable. Live evidence that it often is not: Verkada publishes
+#: ``{"title": "Estimated Hourly Pay Range", "min_cents": 20000000}`` (= $200,000 "an
+#: hour") and a $1.00 placeholder beside a real annual range, and Rocket Lab publishes
+#: hourly technician rates (``min_cents: 1885``) under a label with no interval word at
+#: all — where the old ``or "year"`` default shipped "$18.85 per year".
+_YEAR_FLOOR = 1_000
+_HOUR_CEILING = 2_000
+
+
+def _range_amount(band: dict[str, Any]) -> float | None:
+    """A Greenhouse range's magnitude in currency units (``*_cents`` / 100)."""
+    cents = _number(band.get("max_cents"))
+    if cents is None:
+        cents = _number(band.get("min_cents"))
+    return cents / 100 if cents is not None else None
+
+
+def _range_interval(band: dict[str, Any]) -> str | None:
+    """The interval a Greenhouse range really has, or ``None`` when we cannot tell.
+
+    The label is believed only while the magnitude agrees with it; where they contradict
+    each other neither is evidence, and §4.5.3 step 3 (nulls) beats a wrong answer (R13).
+    An unlabelled range is read by magnitude alone, exactly as step 2 already reads an
+    unlabelled regex match.
+
+    Only ``title`` is read, never ``blurb``: the blurb is a benefits paragraph, and Rocket
+    Lab's says "3 weeks paid vacation and 5 days sick leave **per year**" on hourly
+    technician bands. ``_pick_greenhouse_range`` still matches locations across both,
+    where the blurb genuinely carries the locale.
+
+    ponytail: the two thresholds are USD-shaped, like §4.5.3's own gates. Ceiling — a
+    board paying ¥2,500/hour would have its correct "hour" label dropped to null; fix by
+    scaling the bounds per currency if a live board ever shows one.
+    """
+    said = normalize_interval(_text(band.get("title")))
+    amount = _range_amount(band)
+    if amount is None:
+        return said
+    if said == "hour":
+        return "hour" if 2 <= amount <= _HOUR_CEILING else None
+    if said == "year":
+        return "year" if amount >= _YEAR_FLOOR else None
+    if said:
+        return said
+    return "year" if amount >= _YEAR_FLOOR else "hour" if amount >= 2 else None
+
+
 def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None:
     ranges = [r for r in job.get("pay_input_ranges") or [] if isinstance(r, dict)]
     if not ranges:
         return None
     chosen, raw = _pick_greenhouse_range(ranges, location)
-    label = " ".join(filter(None, (_text(chosen.get("title")), _text(chosen.get("blurb")))))
     low, high = _number(chosen.get("min_cents")), _number(chosen.get("max_cents"))
     return Salary(
         min=low / 100 if low is not None else None,
         max=high / 100 if high is not None else None,
         currency=_currency(chosen.get("currency_type")),
-        interval=normalize_interval(label) or "year",
+        interval=_range_interval(chosen),
         source="ats",
         raw=raw,
     )
@@ -161,6 +208,13 @@ def _pick_greenhouse_range(
     Returns ``(range, salaryRaw)``; ``salaryRaw`` is the range's own ``title`` only when
     the choice was a fallback, so the buyer can see which locale they got.
     """
+    if len(ranges) == 1:
+        return ranges[0], None
+
+    # A range whose label contradicts its own magnitude is not a candidate while a
+    # coherent one exists: Verkada publishes a $1.00 "Estimated Hourly Pay Range" beside
+    # the real $225k-$265k annual range, and `ranges[0]` used to win it outright.
+    ranges = [band for band in ranges if _range_interval(band) is not None] or ranges
     if len(ranges) == 1:
         return ranges[0], None
 
@@ -217,8 +271,22 @@ def structured_salary(job: dict[str, Any], location: Location | None = None) -> 
     for extract in (_ashby, _lever, _recruitee, _rippling):
         found = extract(job)
         if found is not None:
-            return found
-    return _greenhouse(job, location)
+            return _checked(found)
+    found = _greenhouse(job, location)
+    return _checked(found) if found is not None else None
+
+
+def _checked(found: Salary) -> Salary:
+    """§4.5.3 step 3: a compensation object with no numbers in it is a *failed* step 1.
+
+    Claiming ``salarySource: "ats"`` for it both lies about provenance and short-circuits
+    the regex fallback in :func:`parse_salary` — Lever ``salaryRange: {"currency": "USD"}``,
+    a Greenhouse range with no ``min_cents`` and a Rippling band with neither bound all
+    did exactly that (V1 H4). Gated once here, for every provider.
+    """
+    if found.source == "ats" and found.min is None and found.max is None:
+        found.source = None
+    return found
 
 
 # --- step 2: regex fallback ---------------------------------------------------------------

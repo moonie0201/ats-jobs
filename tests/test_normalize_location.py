@@ -203,3 +203,33 @@ def test_geo_lookups():
     assert country_currency("IE") == "EUR"
     assert country_currency("US") == "USD"
     assert country_currency("ZZ") is None
+
+
+# --- primary promotion (live run, §10.2) ----------------------------------------------
+
+
+def test_workplace_word_as_primary_takes_its_place_from_the_office_list():
+    """Cloudflare's Greenhouse board puts "Hybrid" in `location.name` on 207 of 310 jobs
+    and the real place only in `offices[].location` — `city` used to be null board-wide."""
+    primary, locations = parse_locations("Hybrid", ["Washington, DC, United States"])
+    assert primary.raw == "Hybrid", "locationRaw stays the provider's own string"
+    assert (primary.city, primary.region, primary.countryCode) == ("Washington", "DC", "US")
+    assert [loc.raw for loc in locations] == ["Hybrid", "Washington, DC, United States"]
+
+
+def test_promotion_takes_the_first_office_after_the_step_8_sort():
+    primary, _ = parse_locations(
+        "In-Office", ["New York, New York, United States", "Austin, TX, United States"]
+    )
+    # (countryCode, region, city, raw): US/"New York" sorts before US/"TX".
+    assert (primary.city, primary.region) == ("New York", "New York")
+
+
+def test_a_primary_that_names_a_place_is_never_overwritten():
+    primary, _ = parse_locations("Dublin, Ireland", ["Austin, TX, United States"])
+    assert (primary.city, primary.countryCode) == ("Dublin", "IE")
+
+
+def test_nothing_to_promote_leaves_the_primary_null():
+    primary, _ = parse_locations("Remote", ["Distributed"])
+    assert (primary.raw, primary.city, primary.countryCode) == ("Remote", None, None)

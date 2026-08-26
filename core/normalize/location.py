@@ -312,4 +312,30 @@ def parse_locations(
     seen: dict[tuple[Any, ...], Location] = {}
     for loc in parsed:
         seen.setdefault((loc.raw, loc.city, loc.region, loc.countryCode), loc)
-    return primary, sorted(seen.values(), key=lambda loc: loc.sort_key)
+    ordered = sorted(seen.values(), key=lambda loc: loc.sort_key)
+    return _resolved_primary(primary, ordered), ordered
+
+
+def _resolved_primary(primary: Location, ordered: list[Location]) -> Location:
+    """Fill the flat location fields from ``locations[]`` when the primary names no place.
+
+    Cloudflare's Greenhouse board puts the *workplace type* in ``location.name`` —
+    ``"Hybrid"`` on 207 of 310 jobs, ``"In-Office"`` on 44, ``"Distributed"`` on 44 — and
+    the real place only in ``offices[].location``. Step 6 correctly resolves ``"Hybrid"``
+    to nothing, which used to leave ``city``/``region``/``country``/``countryCode`` null
+    on 95% of the board while the parsed office sat one field away in ``locations[]``.
+
+    ``raw`` is deliberately left as the provider's own primary string, so ``locationRaw``
+    keeps the §4.2 "untouched" contract, ``contentKey`` does not move, and §4.5.2 rank 2
+    still reads ``"Hybrid"`` out of it.
+
+    ponytail: a multi-office posting gets the first office after the §4.5.1 step 8 sort,
+    which is a pick, not a fact. Ceiling — the full list is still in ``locations[]``;
+    revisit only if buyers ask for a ranked primary.
+    """
+    if primary.city or primary.region or primary.country or primary.countryCode:
+        return primary
+    for loc in ordered:
+        if loc.city or loc.countryCode:
+            return Location(primary.raw, loc.city, loc.region, loc.country, loc.countryCode)
+    return primary

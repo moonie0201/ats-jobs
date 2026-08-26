@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx
 
-from core.http import Client, NotFound
+from core.http import Client, NotFound, ParseError
 from core.models import JobRecord, Meta, ProviderSpec, Ref
 from core.normalize.location import country_name
 from core.normalize.record import build_job_record
@@ -45,6 +45,9 @@ EU_HOST = "api.eu.lever.co"
 #: `skip`/`limit` are verified working; the default response is already complete, so the
 #: loop below only issues a second request when a page comes back exactly full (§5.2).
 PAGE_SIZE = 1000
+#: A page cap beside the `len(page) < PAGE_SIZE` exit, so a host that never shortens a
+#: page cannot loop forever (V3 S6). 20 pages = 20,000 postings.
+MAX_PAGES = 20
 
 
 def _text(value: object) -> str | None:
@@ -72,7 +75,9 @@ async def _postings_for(client: Client, host: str, slug: str) -> list[dict[str, 
     url = f"https://{host}/v0/postings/{slug}"
     jobs: list[dict[str, Any]] = []
     skip = 0
-    while True:
+    # A host that answers every page with exactly PAGE_SIZE items used to loop forever,
+    # accumulating 1000 dicts per iteration (V3 S6). The largest live board is ~2,000.
+    for _ in range(MAX_PAGES):
         page = await client.get_json(
             url, params={"mode": "json", "limit": PAGE_SIZE, "skip": skip}, parse=_postings
         )
@@ -80,6 +85,7 @@ async def _postings_for(client: Client, host: str, slug: str) -> list[dict[str, 
         if len(page) < PAGE_SIZE:
             return jobs
         skip += PAGE_SIZE
+    raise ParseError(f"lever {slug}: pagination did not terminate after {MAX_PAGES} pages", url=url)
 
 
 async def list_jobs(ref: Ref, client: Client) -> tuple[list[dict[str, Any]], Meta]:

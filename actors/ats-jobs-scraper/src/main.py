@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from types import ModuleType
 from typing import Any
 
-from apify import Actor
+from apify import Actor, Event
 
 from core.billing import Billing
 from core.directory import get_directory
@@ -93,6 +93,13 @@ COMPANY_STATE_KEY = "companies"
 DEGRADED_RATIO = 0.9
 DEGRADED_MIN_COMPANIES = 5
 
+#: `.actor/input_schema.json` -> `companies.maxItems`, restated for API callers (V1 L4).
+MAX_COMPANIES = 2000
+
+#: Headroom left inside `COMPANY_BUDGET_SECS` for an adapter to wind down and emit what
+#: it already has, instead of being cancelled with the whole company in a buffer (V1 H1).
+BUDGET_HEADROOM_SECS = 10.0
+
 
 # --------------------------------------------------------------------------- input
 
@@ -124,7 +131,9 @@ def read_companies(raw: dict[str, Any]) -> list[str]:
             value = value.get("url") or value.get("value") or value.get("slug")
         if isinstance(value, str) and value.strip():
             out.append(value.strip())
-    return list(dict.fromkeys(out))
+    # `maxItems: 2000` is only enforced by the Console form; an API caller can queue
+    # 50,000 (V1 L4). `maxJobs` bounds the charge, not the CU burn.
+    return list(dict.fromkeys(out))[:MAX_COMPANIES]
 
 
 # --------------------------------------------------------------------- data rows
@@ -191,8 +200,10 @@ def classify(exc: BaseException) -> tuple[str, str]:
     if isinstance(exc, TimeoutError):
         return "timeout", f"the company took longer than {COMPANY_BUDGET_SECS:.0f}s"
     if isinstance(exc, ValueError | KeyError | TypeError):
-        return "parse_error", f"the provider payload did not parse: {type(exc).__name__}: {exc}"
-    return "http_error", f"{type(exc).__name__}: {exc}"
+        return "parse_error", f"the provider payload did not parse: {type(exc).__name__}"
+    # V3 S13: an unexpected exception's message can carry internal paths and state, and
+    # the `error` row is customer-visible. The detail goes to the log, not the dataset.
+    return "http_error", f"the company could not be fetched ({type(exc).__name__})"
 
 
 # ------------------------------------------------------------------ record shaping
@@ -248,12 +259,18 @@ class RunCtx:
     company_state: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     seen_ids: set[str] = field(default_factory=set)
-    seen_content: set[str] = field(default_factory=set)
+    #: contentKey -> the row that survived it, run-wide. A per-company map recorded
+    #: `dedupedFrom` inside a company but dropped a cross-company collision with no
+    #: trace at all (§4.5.6 correction 2, V1 M6).
+    content_survivors: dict[str, Any] = field(default_factory=dict)
     summaries: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     companies_seen: Counter = field(default_factory=Counter)
     companies_zero: Counter = field(default_factory=Counter)
     jobs_found_total: int = 0
     companies_ok: int = 0
+    store: Any = None
+    #: Idempotence for `flush_summaries`, which the abort handler may reach first (V1 M4).
+    flushed: bool = False
 
 
 def company_key(ref: Ref) -> str:
@@ -268,7 +285,6 @@ def dedupe(ctx: RunCtx, records: list[Any]) -> tuple[list[Any], int]:
     """§4.5.6: always by `id`, additionally by `contentKey` when asked. Run-wide, and the
     surviving row carries the ids it swallowed in `dedupedFrom`."""
     kept: list[Any] = []
-    by_content: dict[str, Any] = {}
     dropped = 0
     for record in records:
         if record.id:
@@ -277,33 +293,46 @@ def dedupe(ctx: RunCtx, records: list[Any]) -> tuple[list[Any], int]:
                 continue
             ctx.seen_ids.add(record.id)
         if ctx.cfg["dedupe"] == "content" and record.contentKey:
-            survivor = by_content.get(record.contentKey)
+            survivor = ctx.content_survivors.get(record.contentKey)
             if survivor is not None:
+                # The survivor may already have been pushed, in which case the merge is
+                # only visible in `duplicatesDropped` on the summary — documented in
+                # `dataset_schema.json` -> `dedupedFrom` (V1 M6).
                 survivor.dedupedFrom = (survivor.dedupedFrom or []) + [record.id or ""]
                 dropped += 1
                 continue
-            if record.contentKey in ctx.seen_content:
-                dropped += 1
-                continue
-            ctx.seen_content.add(record.contentKey)
-            by_content[record.contentKey] = record
+            ctx.content_survivors[record.contentKey] = record
         kept.append(record)
     return kept, dropped
 
 
 def apply_delta(ctx: RunCtx, records: list[Any]) -> tuple[list[Any], int | None]:
-    """§4.5.6 across runs. Without a state store `isNew` stays null — we do not know."""
+    """§4.5.6 across runs. Without a state store `isNew` stays null — we do not know.
+
+    Decides only. Marking here used to happen for every kept row — before the
+    `maxJobsPerCompany` trim, before `maxJobs` and before the charge limit could stop the
+    push — so a row that was never delivered still had `isNew=false` on every later run
+    and was lost permanently (V1 B3). :func:`commit_delta` marks what actually landed.
+    """
     if ctx.state is None:
         return records, None
-    new_jobs = 0
     for record in records:
         if not record.id:
             continue
         record.isNew = ctx.state.is_new(record.id)
         record.firstSeenAt = ctx.state.first_seen(record.id) or record.scrapedAt
-        if ctx.state.mark(record.id, record.changeHash):
-            new_jobs += 1
-    return [r for r in records if r.isNew], new_jobs
+    return [r for r in records if r.isNew], 0
+
+
+def commit_delta(ctx: RunCtx, delivered: list[Any]) -> int:
+    """Mark the rows that were actually pushed. Never call it before the push (V1 B3)."""
+    if ctx.state is None:
+        return 0
+    marked = 0
+    for record in delivered:
+        if record.id and ctx.state.mark(record.id, record.changeHash):
+            marked += 1
+    return marked
 
 
 async def push_jobs(ctx: RunCtx, records: list[Any]) -> int:
@@ -321,10 +350,14 @@ async def push_jobs(ctx: RunCtx, records: list[Any]) -> int:
 async def process_company(ref: Ref, client: Any, ctx: RunCtx) -> None:
     cfg = ctx.cfg
     started = time.monotonic()
+    # §8.6's budget as a deadline the adapter can *see*, not only as a killer: Rippling
+    # issues one detail call per job against a 2 rps bucket, so a 374-job board overran
+    # 120 s and the cancellation cost the buyer every row (V1 H1).
+    budget = dict(cfg, deadline=started + COMPANY_BUDGET_SECS - BUDGET_HEADROOM_SECS)
     try:
         module = get_adapter(ref.provider)
         async with asyncio.timeout(COMPANY_BUDGET_SECS):
-            records = await adapter_fetch(module, ref, client, cfg)
+            records = await adapter_fetch(module, ref, client, budget)
     except AdapterNotFound as exc:
         await ctx.billing.push_free(
             error_item(ref.provider, ref.slug, ref.input, "provider_unavailable", str(exc))
@@ -336,7 +369,12 @@ async def process_company(ref: Ref, client: Any, ctx: RunCtx) -> None:
         await ctx.billing.push_free(error_item(ref.provider, ref.slug, ref.input, status, message))
         Actor.log.warning(
             "company failed",
-            extra={"provider": ref.provider, "slug": ref.slug, "status": status},
+            extra={
+                "provider": ref.provider,
+                "slug": ref.slug,
+                "status": status,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
         )
         return
 
@@ -348,7 +386,7 @@ async def process_company(ref: Ref, client: Any, ctx: RunCtx) -> None:
         ctx.companies_zero[ref.provider] += 1
 
     company = next((r.company for r in records if r.company), None)
-    domain = next((r.companyDomain for r in records if r.companyDomain), None)
+    domain = next((r.companyDomain for r in records if r.companyDomain), None) or ref.domain
     scraped = now_iso()
 
     survivors: list[Any] = []
@@ -357,6 +395,9 @@ async def process_company(ref: Ref, client: Any, ctx: RunCtx) -> None:
         record.companySlug = record.companySlug or ref.slug
         record.input = record.input or ref.input
         record.scrapedAt = record.scrapedAt or scraped
+        # §4.6 advertises `companyDomain`; no adapter can supply it, the directory row
+        # can (V1 M3).
+        record.companyDomain = record.companyDomain or ref.domain
         shape_record(record, cfg)
         if ctx.filters.keep(record):
             survivors.append(record)
@@ -367,7 +408,20 @@ async def process_company(ref: Ref, client: Any, ctx: RunCtx) -> None:
     if cfg["maxJobsPerCompany"]:
         emit = emit[: cfg["maxJobsPerCompany"]]
 
-    delivered = await push_jobs(ctx, emit)
+    try:
+        delivered = await push_jobs(ctx, emit)
+    except Exception as exc:  # noqa: BLE001 - a push failure is this company's, not the run's
+        status, message = classify(exc)
+        await ctx.billing.push_free(error_item(ref.provider, ref.slug, ref.input, status, message))
+        Actor.log.warning(
+            "push failed",
+            extra={"provider": ref.provider, "slug": ref.slug, "error": f"{type(exc)}: {exc}"},
+        )
+        return
+    if ctx.state is not None:
+        async with ctx.lock:
+            # §4.5.6, V1 B3: state records what was delivered, never what was considered.
+            new_jobs = commit_delta(ctx, emit[:delivered])
 
     warnings = list(ctx.filters.warnings)
     tracked_since = None
@@ -437,32 +491,31 @@ async def worker(queue: asyncio.Queue[Ref], client: Any, ctx: RunCtx) -> None:
             queue.task_done()
 
 
-async def resolve_all(entries: list[str], ctx: RunCtx) -> list[Ref]:
-    """§5.11. The directory is loaded only if some entry actually needs it (§6.6)."""
+async def resolve_all(entries: list[str], client: Any, ctx: RunCtx) -> list[Ref]:
+    """§5.11. The directory is loaded only if some entry actually needs it (§6.6).
+
+    ``client`` is not optional: `load_directory` only offers the jsDelivr and
+    raw.githubusercontent sources when it has one, so calling `get_directory()` bare left
+    the loader with nothing but an empty KV store and a baked file that is not in the tree
+    — every bare slug and company name became an error row (V1 H2, V3 S10).
+    """
     directory = None
     if any(needs_directory(entry) for entry in entries):
         try:
-            directory = await get_directory()
+            directory = await get_directory(client)
         except Exception as exc:  # noqa: BLE001 - a missing directory is not a failed run
             Actor.log.warning("company directory unavailable", extra={"error": str(exc)})
 
     refs: list[Ref] = []
     for entry in entries:
+        # `providers` restricts directory lookups only; an explicit prefix or URL always
+        # wins (§4.1, §5.11). `resolve()` implements that — re-filtering the result here
+        # broke every saved input carrying both a URL list and a narrowed provider list,
+        # and blamed the user's slug for it (V1 H3).
         result = resolve(entry, providers=ctx.cfg["providers"], directory=directory)
         if isinstance(result, Unresolved):
             await ctx.billing.push_free(
                 error_item(None, None, entry, result.status, result.message)
-            )
-            continue
-        if result.provider not in ctx.cfg["providers"]:
-            await ctx.billing.push_free(
-                error_item(
-                    result.provider,
-                    result.slug,
-                    entry,
-                    "not_found",
-                    f"{result.provider} is not in the providers you selected",
-                )
             )
             continue
         refs.append(result)
@@ -481,12 +534,57 @@ async def flush_summaries(ctx: RunCtx) -> None:
             "provider degraded: 200-with-zero-jobs at population scale — see §14.3",
             extra={"provider": provider, "companies": ctx.companies_seen[provider]},
         )
+    if ctx.flushed:  # the ABORTING handler may have run already (V1 M4)
+        return
+    ctx.flushed = True
     if not ctx.cfg["includeCompanySummary"]:
         return
     for provider, item in ctx.summaries:
         if provider in degraded:
             item["warnings"] = (item.get("warnings") or []) + ["provider_degraded"]
+            # §5.12: "rather than a per-company `ok`" — a pipeline filtering on
+            # `status == "ok"` must not record a broken provider as healthy (V1 M1).
+            if item.get("status") == "ok":
+                item["status"] = "provider_degraded"
         await ctx.billing.push_free(item)
+
+
+async def open_state(ctx: RunCtx) -> None:
+    """`onlyNewJobs` state, degrading instead of failing the run (V1 M5).
+
+    Apify rejects a named store whose name it does not like, and that rejection used to
+    surface as an unhandled exception *after* every company had already resolved — the
+    opposite of the "degrade, never fail" posture the rest of the shell keeps.
+    """
+    key = ctx.cfg["stateKey"]
+    try:
+        ctx.state = await SeenState.open(key)
+        ctx.store = await Actor.open_key_value_store(name=key)
+        previous = await ctx.store.get_value(COMPANY_STATE_KEY)
+    except Exception as exc:  # noqa: BLE001
+        ctx.state = None
+        ctx.store = None
+        Actor.log.warning(
+            "state store unavailable; onlyNewJobs disabled", extra={"error": str(exc)}
+        )
+        await ctx.billing.push_free(
+            error_item(None, None, None, "http_error", f"could not open state store {key!r}")
+        )
+        return
+    # V3 S14: a non-dict value in the store used to crash later at `.get`.
+    ctx.company_state = previous if isinstance(previous, dict) else {}
+
+
+async def save_state(ctx: RunCtx) -> None:
+    if ctx.state is None or ctx.store is None:
+        return
+    pruned = ctx.state.prune(int(ctx.cfg["stateRetentionDays"]))
+    await ctx.state.save()
+    await ctx.store.set_value(COMPANY_STATE_KEY, ctx.company_state)
+    Actor.log.info(
+        "state saved",
+        extra={"ids": len(ctx.state.seen), "pruned": pruned, "key": ctx.cfg["stateKey"]},
+    )
 
 
 async def main() -> None:
@@ -524,41 +622,47 @@ async def main() -> None:
             )
             return
 
-        refs = await resolve_all(entries, ctx)
-        if not refs:
-            Actor.log.warning("nothing resolved", extra={"entries": len(entries)})
-            if cfg["failOnAllErrors"]:
-                await Actor.fail(status_message="No company could be resolved to an ATS board")
-            return
+        # §5.12's last row: flush what we have inside the 30 s abort/migration window,
+        # or an aborted monitoring run loses every summary *and* its delta baseline (M4).
+        async def on_abort(_data: Any = None) -> None:
+            await flush_summaries(ctx)
+            await save_state(ctx)
 
-        store = None
-        if cfg["onlyNewJobs"]:
-            # §8.2: instrumentation only, $0.00, once per run, never otherwise.
-            await ctx.billing.charge_delta_run()
-            ctx.state = await SeenState.open(cfg["stateKey"])
-            store = await Actor.open_key_value_store(name=cfg["stateKey"])
-            ctx.company_state = await store.get_value(COMPANY_STATE_KEY) or {}
+        Actor.on(Event.ABORTING, on_abort)
+        Actor.on(Event.MIGRATING, on_abort)
 
         async with make_client(timeout_secs=float(cfg["requestTimeoutSecs"])) as client:
+            refs = await resolve_all(entries, client, ctx)
+            if not refs:
+                Actor.log.warning("nothing resolved", extra={"entries": len(entries)})
+                if cfg["failOnAllErrors"]:
+                    await Actor.fail(status_message="No company could be resolved to an ATS board")
+                return
+
+            if cfg["onlyNewJobs"]:
+                # §8.2: instrumentation only, $0.00, once per run, never otherwise.
+                await ctx.billing.charge_delta_run()
+                await open_state(ctx)
+
             queue: asyncio.Queue[Ref] = asyncio.Queue()
             for ref in refs:
                 queue.put_nowait(ref)
-            await asyncio.gather(
+            # `return_exceptions=True`: a raise out of one worker used to orphan its
+            # siblings, close the HTTP client under them and skip both the summary flush
+            # and the state save — losing the ids of rows already charged for (V3 S9).
+            outcomes = await asyncio.gather(
                 *(
                     asyncio.create_task(worker(queue, client, ctx))
                     for _ in range(min(cfg["maxConcurrency"], len(refs)))
-                )
+                ),
+                return_exceptions=True,
             )
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    Actor.log.exception("worker crashed", exc_info=outcome)
 
         await flush_summaries(ctx)
-        if ctx.state is not None and store is not None:
-            pruned = ctx.state.prune(int(cfg["stateRetentionDays"]))
-            await ctx.state.save()
-            await store.set_value(COMPANY_STATE_KEY, ctx.company_state)
-            Actor.log.info(
-                "state saved",
-                extra={"ids": len(ctx.state.seen), "pruned": pruned, "key": cfg["stateKey"]},
-            )
+        await save_state(ctx)
 
         Actor.log.info(
             "run done",

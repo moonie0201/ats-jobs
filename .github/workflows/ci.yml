@@ -11,11 +11,17 @@ jobs:
       - run: ruff check . && ruff format --check .
       - run: |
           python -m pytest -q -m "not live" --cov=core --cov-fail-under=90 \
-            --cov=core/normalize --cov=core/diff.py --cov=core/billing.py --cov=core/history.py
+            --cov=actors/ats-jobs-scraper/src
       - run: python scripts/validate_schemas.py    # json.load every .actor/*.json, assert
                                                    # input schema <500 kB, no default+required,
-                                                   # every field has title+description,
+                                                   # every field has title+description+example,
                                                    # every description <500 chars,
                                                    # no "Official" in any title/name/SEO field,
                                                    # provider enums identical across
-                                                   #   input_schema, dataset_schema and README
+                                                   #   input_schema, dataset_schema and README,
+                                                   # status vocabulary identical to core.models
+      # The only step that would have caught `COPY core ./core` with no core/ in the
+      # build context (V1 B2). Nothing else builds the image.
+      - run: python scripts/sync_actor_files.py ats-jobs-scraper
+      - run: docker build actors/ats-jobs-scraper
+      - run: python scripts/sync_actor_files.py ats-jobs-scraper --clean

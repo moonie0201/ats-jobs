@@ -111,6 +111,7 @@
         "type": ["array", "null"],
         "title": "All locations",
         "description": "Every location attached to the posting, parsed the same way as the primary one.",
+        "example": [{ "raw": "Berlin, Germany", "city": "Berlin", "countryCode": "DE" }],
         "items": { "type": "object" }
       },
       "remote": {
@@ -235,7 +236,7 @@
       "descriptionHtml": {
         "type": ["string", "null"],
         "title": "Description (HTML)",
-        "description": "Job ad body as HTML. Present only when includeDescription is on.",
+        "description": "Job ad body as the employer's own HTML, not sanitised. Escape it before you render it. Present only when includeDescription is on.",
         "example": "<p>We are hiring…</p>"
       },
       "descriptionText": {
@@ -265,7 +266,8 @@
       "dedupedFrom": {
         "type": ["array", "null"],
         "title": "Deduped from",
-        "description": "When content dedupe merged rows, the ATS job ids that were dropped into this one.",
+        "description": "When content dedupe merged rows, the ATS job ids dropped into this one. A row merged after it was already pushed shows only in the summary's duplicatesDropped.",
+        "example": ["4012346"],
         "items": { "type": "string" }
       },
       "isNew": {
@@ -289,12 +291,14 @@
       "raw": {
         "type": ["object", "null"],
         "title": "Raw ATS payload",
-        "description": "Untouched provider object. Present only when includeRawJson is on."
+        "description": "Provider object with contact-shaped fields and ad bodies removed and remaining text redacted. Present only when includeRawJson is on.",
+        "example": { "id": 4012345 }
       },
       "warnings": {
         "type": ["array", "null"],
         "title": "Warnings",
         "description": "Non-fatal problems on this row, e.g. detail_failed when the description call failed but the job was still delivered.",
+        "example": ["detail_failed"],
         "items": { "type": "string" }
       },
       "jobsFound": {
@@ -324,19 +328,20 @@
       "trackedSince": {
         "type": ["string", "null"],
         "title": "Tracked since",
-        "description": "The date this company entered our daily snapshot history. Ask us in 90 days how fast it's hiring.",
+        "description": "The date this company first appeared under your stateKey. Populated when onlyNewJobs is on.",
         "example": "2026-08-26"
       },
       "topDepartments": {
         "type": ["array", "null"],
         "title": "Top departments",
         "description": "company_summary only: most common departments with counts.",
+        "example": [{ "name": "Engineering", "count": 42 }],
         "items": { "type": "object" }
       },
       "status": {
         "type": ["string", "null"],
         "title": "Status",
-        "description": "company_summary and error rows: ok, not_found, unconfirmed, rate_limited, http_error, parse_error or timeout.",
+        "description": "company_summary and error rows: ok, not_found, unconfirmed, rate_limited, http_error, parse_error, timeout, max_jobs_reached, budget_exhausted, no_companies, unresolved_domain, provider_unavailable or provider_degraded.",
         "example": "ok"
       },
       "error": {

@@ -308,13 +308,15 @@ COM_URL = "https://personio.jobs.personio.com/xml"
 
 
 @respx.mock
-async def test_fetch_reads_the_de_host_with_language_en(client: Client):
+async def test_fetch_reads_the_de_host_in_the_boards_own_language(client: Client):
+    """No ``?language=``: Personio serves the language asked for and does not fall back,
+    so ``language=en`` empties ``<jobDescriptions>`` on a German board (§5.8, live run)."""
     route = respx.get(DE_URL).mock(
         return_value=httpx.Response(200, text=load_fixture("personio", "sample.xml"))
     )
     rows = await fetch(SAMPLE_REF, client, OPTIONS)
     assert [row.id for row in rows] == ["personio:personio:1834171"]
-    assert route.calls[0].request.url.params["language"] == "en"
+    assert "language" not in route.calls[0].request.url.params
 
 
 @respx.mock

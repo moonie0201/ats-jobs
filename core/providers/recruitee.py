@@ -34,6 +34,7 @@ from typing import Any
 from core.http import NotFound, ParseError
 from core.models import JobRecord, ProviderSpec, Ref
 from core.normalize.record import build_job_record
+from core.normalize.redact import strip_contact_fields
 
 SPEC = ProviderSpec(
     name="recruitee",
@@ -95,8 +96,9 @@ def _pay_job(offer: dict[str, Any]) -> dict[str, Any]:
     """The offer as the normalizers should see it (§4.5.3 step 3).
 
     An all-null ``salary`` object is still a dict, and a dict is enough for step 1 to
-    claim ``salarySource: "ats"`` with no numbers in it — which both lies about provenance
-    and suppresses the regex fallback. Blanking it restores the specified order.
+    claim ``salarySource: "ats"`` with no numbers in it. ``salary._checked`` now gates
+    that for every provider (V1 H4); this stays because Recruitee's object also carries
+    non-numeric keys the shared reader would otherwise report as a range's ``raw``.
     """
     if _has_pay(offer.get("salary")) or "salary" not in offer:
         return offer
@@ -167,7 +169,11 @@ def to_record(raw: dict[str, Any], ref: Ref, options: dict[str, Any] | None = No
     if isinstance(code, str) and code.strip():
         record.employmentTypeRaw = code.strip()
     if record.raw is not None:
-        record.raw = offer  # `includeRawJson` gets the payload, not the pay-blanked copy
+        # `includeRawJson` gets the payload, not the pay-blanked copy — but scrubbed, or
+        # this line would silently undo §15.2 (V1 B1, V3 S4).
+        record.raw = strip_contact_fields(
+            offer, redact=bool((options or {}).get("redactContacts", True))
+        )
     return record
 
 

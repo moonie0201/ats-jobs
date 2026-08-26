@@ -123,3 +123,16 @@ def test_record_leaves_the_body_alone_when_redaction_is_off():
 def test_empty_input():
     assert redact_text(None) == (None, False)
     assert redact_text("") == ("", False)
+
+
+def test_obfuscated_separators_still_redact():
+    for form in ("jane (at) acme.com", "jane[at]acme.com", "jane (at)acme.com"):
+        text, hit = redact_text(f"Write to {form} please")
+        assert hit and "acme.com" not in text, form
+
+
+def test_a_bare_domain_is_not_an_address_and_the_word_before_it_survives():
+    """Cohere's live anti-fraud line, on all 143 jobs of the board (§10.2 live run)."""
+    body = "Communications come from an @cohere.com or @cw.cohere email alias."
+    text, hit = redact_text(body)
+    assert (text, hit) == (body, False)

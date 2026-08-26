@@ -13,6 +13,8 @@ contract — never that our normalization is wrong.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from core.http import make_client
@@ -75,3 +77,58 @@ async def test_live_board_contract(provider: str) -> None:
 
     # Every row must survive `to_item`, which is what the dataset actually receives.
     assert all(item["recordType"] == "job" for item in (r.to_item("full") for r in records))
+
+
+#: §5.12's degradation guard, restated as a blocking contract test. v1's mistake was
+#: marking exactly this non-blocking, which is how the Workable class of failure ships.
+DEGRADED_RATIO = 0.9
+POPULATION: dict[str, tuple[str, ...]] = {
+    "greenhouse": ("stripe", "cloudflare", "verkada", "rocketlab", "anthropic"),
+    "lever": ("palantir", "zoox", "veeva", "spotify", "lever"),
+    "ashby": ("openai", "snowflake", "notion", "cohere", "linear"),
+    "recruitee": ("channable", "bunq", "greenchoice", "123fahrschule", "nmbrs"),
+    "rippling": (
+        "rippling",
+        "riot-platforms-careers",
+        "boom-supersonic",
+        "kraken-robotics-inc",
+        "atlas-data-storage",
+    ),
+    "personio": ("personio", "1komma5grad", "1sp-agency", "1000satellites-coworking", "sennder"),
+}
+
+
+async def test_ashby_compensation_interval_still_matches_what_we_parse() -> None:
+    """§5.3: `ashby_interval()` reads `"1 YEAR"`. A v1 misreading of this exact field
+    would have nulled every Ashby salary, so the shape is a blocking tripwire (V1 M7)."""
+    ref = Ref(provider="ashby", slug=BOARDS["ashby"])
+    async with make_client(timeout_secs=60.0) as client:
+        records = await get_adapter("ashby").fetch(
+            ref, client, options={**OPTIONS, "includeRawJson": True}
+        )
+
+    intervals = {
+        component.get("interval")
+        for record in records
+        for component in (record.raw or {}).get("compensation", {}).get("summaryComponents") or []
+    }
+    seen = [value for value in intervals if value]
+    assert seen, "no Ashby posting published an interval — the compensation object moved"
+    assert all(re.fullmatch(r"\d+\s+[A-Z]+", value) for value in seen), seen
+
+
+@pytest.mark.parametrize("provider", sorted(POPULATION))
+async def test_no_provider_returns_a_population_of_empty_boards(provider: str) -> None:
+    """§5.12: >90% of a provider's boards answering 200-with-zero-jobs is a broken
+    provider, not five quiet companies. This must fail the contract suite (V1 M7)."""
+    empty = 0
+    async with make_client(timeout_secs=60.0) as client:
+        for slug in POPULATION[provider]:
+            ref = Ref(provider=provider, slug=slug)
+            try:
+                records = await get_adapter(provider).fetch(ref, client, options={})
+            except Exception:  # noqa: BLE001 - a dark slug is not a degraded provider
+                continue
+            empty += not records
+    ratio = empty / len(POPULATION[provider])
+    assert ratio <= DEGRADED_RATIO, f"{provider}: {empty} of 5 boards returned zero jobs"

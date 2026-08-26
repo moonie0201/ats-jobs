@@ -6,11 +6,14 @@ Checks, in the order §11.1 lists them:
 * every `.actor/*.json` parses with `json.load`
 * the input schema is under 500 kB
 * no property is both `required` and carries a `default` (Apify input schema v1 rule)
-* every field carries `title` + `description`, and every description is under 500 chars
-  (MCP truncates at 500)
+* every field carries `title` + `description` (+ `example` on dataset fields), and every
+  description is under 500 chars (MCP truncates at 500)
 * the word "Official" appears in no title, name or other SEO-visible field (§3.3, V1 L6)
 * the provider enum is identical across `input_schema.json`, `dataset_schema.json` and
   the Actor README — a drifting enum is the Congruency failure §13.5 warns about
+* every `core.models.STATUSES` value is named in the dataset schema's `status`
+  description: the Actor pushed `provider_unavailable` while the schema documented seven
+  of the twelve statuses, and the provider-only lint never saw it (V1 M2)
 
 Exits 1 and prints every problem it found; exits 0 silently-ish on success.
 """
@@ -24,6 +27,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from core.models import STATUSES  # noqa: E402
+
 ACTORS_DIR = ROOT / "actors"
 
 MAX_INPUT_SCHEMA_BYTES = 500_000
@@ -56,13 +63,20 @@ def check_no_official(doc: Any, label: str, errors: list[str]) -> None:
             errors.append(f"{path}: 'Official' is banned from titles/names/SEO fields (§3.3)")
 
 
-def check_field_docs(properties: dict[str, Any], label: str, errors: list[str]) -> None:
+def check_field_docs(
+    properties: dict[str, Any],
+    label: str,
+    errors: list[str],
+    *,
+    keys: tuple[str, ...] = ("title", "description"),
+) -> None:
     for name, spec in properties.items():
         if not isinstance(spec, dict):
             errors.append(f"{label}.{name}: expected an object")
             continue
-        for required_key in ("title", "description"):
-            if not spec.get(required_key):
+        for required_key in keys:
+            # Presence, not truthiness: `"example": 0` and `"example": false` are real.
+            if required_key not in spec or spec[required_key] in (None, ""):
                 errors.append(f"{label}.{name}: missing '{required_key}'")
         description = spec.get("description", "")
         if len(description) >= MAX_DESCRIPTION_CHARS:
@@ -97,7 +111,18 @@ def check_dataset_schema(path: Path, doc: dict[str, Any], errors: list[str]) -> 
     if not properties:
         errors.append(f"{label}: no fields.properties")
         return []
-    check_field_docs(properties, label, errors)
+    # §4.2: "title/description/example are present on every field because that is what
+    # MCP agents read" — the lint checked two of the three (V1 L6).
+    check_field_docs(properties, label, errors, keys=("title", "description", "example"))
+
+    status_text = properties.get("status", {}).get("description", "")
+    named = set(re.findall(r"[a-z_]+", status_text))
+    missing = [value for value in STATUSES if value not in named]
+    if missing:
+        errors.append(
+            f"{label}.status: description never names {missing}, "
+            "which core.models.STATUSES declares"
+        )
 
     for view_name, view in doc.get("views", {}).items():
         for field_name in view.get("transformation", {}).get("fields", []):

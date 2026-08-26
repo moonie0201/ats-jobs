@@ -16,7 +16,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTOR = ROOT / "actors" / "ats-jobs-scraper"
-sys.path.insert(0, str(ACTOR))
+# Appended, never prepended: `scripts/sync_actor_files.py` drops a build copy of `core/`
+# into the Actor directory, and prepending would shadow the real one under test (V1 B2).
+sys.path.append(str(ACTOR))
 
 from src.main import (  # noqa: E402
     RunCtx,
@@ -88,7 +90,7 @@ def _ctx(dedupe_mode: str = "id") -> RunCtx:
     ctx = RunCtx.__new__(RunCtx)  # no Actor, no Billing needed for the dedupe pass
     ctx.cfg = read_config({"dedupe": dedupe_mode})
     ctx.seen_ids = set()
-    ctx.seen_content = set()
+    ctx.content_survivors = {}
     return ctx
 
 

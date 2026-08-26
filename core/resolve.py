@@ -22,22 +22,31 @@ KNOWN_PREFIXES: tuple[str, ...] = (*PROVIDERS, "workday")
 
 #: §5.11: every class admits uppercase and is anchored with a lookahead, so a mixed-case
 #: slug either matches whole or fails cleanly. It must never capture a fragment.
+#: Each pattern is anchored to the start of the entry or to a ``//`` authority, so a
+#: career-site host can only be read out of the *host* position: without it
+#: ``https://attacker.example/?x=jobs.lever.co/palantir`` resolved to Lever `palantir`
+#: (V3 S12).
 HOST_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
-            r"(?:job-boards|boards)\.greenhouse\.io/"
+            r"(?:\A|//)(?:job-boards|boards)\.greenhouse\.io/"
             r"(?:embed/job_board\?for=)?([A-Za-z0-9_.-]+)(?=[/?#]|$)"
         ),
         "greenhouse",
     ),
-    (re.compile(r"jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "lever"),
-    (re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "ashby"),
-    (re.compile(r"([A-Za-z0-9-]+)\.recruitee\.com(?=[/?#]|$)"), "recruitee"),
-    (re.compile(r"ats\.rippling\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "rippling"),
-    (re.compile(r"([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)(?=[/?#]|$)"), "personio"),
+    (re.compile(r"(?:\A|//)jobs(?:\.eu)?\.lever\.co/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "lever"),
+    (re.compile(r"(?:\A|//)jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "ashby"),
+    (re.compile(r"(?:\A|//)([A-Za-z0-9-]+)\.recruitee\.com(?=[/?#]|$)"), "recruitee"),
+    (re.compile(r"(?:\A|//)ats\.rippling\.com/([A-Za-z0-9_.-]+)(?=[/?#]|$)"), "rippling"),
+    (re.compile(r"(?:\A|//)([A-Za-z0-9-]+)\.jobs\.personio\.(?:de|com)(?=[/?#]|$)"), "personio"),
 )
 
 RESERVED_SLUG = re.compile(r"^(embed|api|www|sitemap|robots|assets|static)$", re.IGNORECASE)
+#: A board slug is one DNS label or one path segment. The old filter was *negative* — it
+#: rejected ``%`` and eight reserved words and passed everything else — so `?`, `#`, `:`
+#: and `@` survived into ``https://{slug}.recruitee.com/...``, where they terminate the
+#: URL authority: ``recruitee:localhost:6379?`` reached localhost:6379 (V3 S1).
+SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(?!//)(\S.*)$")
 DOMAIN_RE = re.compile(r"^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
 URLISH_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://|^//|/")
@@ -62,7 +71,9 @@ class DirectoryLookup(Protocol):
 
 
 def valid_slug(slug: str) -> bool:
-    return bool(slug) and "%" not in slug and not RESERVED_SLUG.match(slug)
+    """Positive charset only (V3 S1). Every ``Ref`` in the codebase is born through here
+    or through :func:`core.directory.Directory._to_refs`, which calls it too."""
+    return bool(SLUG_RE.match(slug)) and not RESERVED_SLUG.match(slug)
 
 
 def parse_prefix(entry: str) -> Ref | None:
@@ -76,6 +87,10 @@ def parse_prefix(entry: str) -> Ref | None:
     rest = match.group(2).strip().strip("/")
     slug, _, site = rest.partition("/")
     if not valid_slug(slug):
+        return None
+    # `site` is the second path segment of a `workday:nvidia/NVIDIAExternalCareerSite`
+    # style entry and reaches a URL too, so it gets the same charset (V3 S1/S11).
+    if site and not SLUG_RE.match(site):
         return None
     return Ref(provider=provider, slug=slug, site=site or None, input=entry)
 
@@ -157,6 +172,7 @@ def resolve(
             slug=hit.slug,
             site=hit.site,
             region=hit.region,
+            domain=hit.domain,
             input=entry,
         )
     if not hits:

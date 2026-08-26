@@ -39,7 +39,7 @@ from core.normalize.employment import detect_employment
 from core.normalize.html import html_to_text
 from core.normalize.identity import apply_identity
 from core.normalize.location import parse_locations
-from core.normalize.redact import redact_description
+from core.normalize.redact import redact_description, strip_contact_fields
 from core.normalize.remote import detect_remote
 from core.normalize.salary import parse_salary
 
@@ -133,7 +133,8 @@ def build_job_record(
             record.descriptionText = description_text
         record.descriptionRedacted = redacted if (description_html or description_text) else None
     if options.get("includeRawJson") and isinstance(job, dict):
-        record.raw = job
+        # §15.2: never the untouched payload — see `strip_contact_fields` (V1 B1, V3 S4).
+        record.raw = strip_contact_fields(job, redact=redact)
 
     # 8. Identity and change detection (§4.5.6).
     return apply_identity(record)

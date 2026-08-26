@@ -50,6 +50,9 @@ STATUSES: tuple[str, ...] = (
     "budget_exhausted",
     "no_companies",
     "unresolved_domain",
+    #: The Actor pushes both of these; neither used to be in the vocabulary (V1 M1, M2).
+    "provider_unavailable",
+    "provider_degraded",
 )
 
 # --- output profiles (§4.6) ---
@@ -102,6 +105,9 @@ class Ref:
     slug: str
     site: str | None = None
     region: str | None = None
+    #: Website domain from the directory row, when the entry resolved through it. §4.6
+    #: advertises `companyDomain` on every row and no provider API supplies it (V1 M3).
+    domain: str | None = None
     #: The exact entry from the user's ``companies`` list that produced this Ref.
     #: Carried here so every emitted row can fill the dataset's ``input`` field (§4.2)
     #: without a parallel lookup table.

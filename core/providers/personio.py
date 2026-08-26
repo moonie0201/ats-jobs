@@ -2,7 +2,14 @@
 
 One request per company::
 
-    GET https://{slug}.jobs.personio.de/xml?language=en   ->  <workzag-jobs><position>…
+    GET https://{slug}.jobs.personio.de/xml   ->  <workzag-jobs><position>…
+
+**No ``?language=`` parameter.** Personio serves the requested language and does *not*
+fall back to the ad's own: on ``1komma5grad`` (322 positions) ``?language=en`` returns 35
+positions with a body and 287 with ``<jobDescriptions></jobDescriptions>``, while the
+bare URL returns 321. Since ``descriptionText`` also feeds §4.5.2 rank 5 and §4.5.3
+step 2, asking for English on a German board silently emptied the body, the remote flag
+and the parsed salary for 89% of the board's jobs.
 
 No pagination, no detail call — the description sections are inline as CDATA. An unknown
 board answers **307** (§5.12 maps 3xx to `not_found`, and `core.http.Client` never follows
@@ -166,7 +173,6 @@ async def fetch(
         try:
             positions = await client.get_json(
                 list_url(ref.slug, host),
-                params={"language": "en"},
                 parse=_parse_response,
             )
         except NotFound as exc:

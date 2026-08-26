@@ -11,13 +11,20 @@ Runs **before** salary parsing, so a redacted phone number cannot be read as a p
 from __future__ import annotations
 
 import re
+from typing import Any
 
 PLACEHOLDER = "[redacted]"
 
+#: Whitespace is allowed only around the *obfuscated* separators, where it is part of the
+#: convention (``jane (at) acme.com``). A literal ``@`` must touch its local part: with
+#: ``\s?`` on both sides, Cohere's live anti-fraud line "communications … coming from an
+#: @cohere.com or @cw.cohere email alias" redacted as "from [redacted] [redacted] email
+#: alias" on all 143 jobs of the board — a bare domain is not a contact, and eating the
+#: word in front of it corrupts the ad body we sell.
 _EMAIL = re.compile(
     r"""(?<![\w.+-])
         [A-Za-z0-9._%+-]+
-        \s?(?:@|\(at\)|\[at\])\s?
+        (?:@|\s?(?:\(at\)|\[at\])\s?)
         [A-Za-z0-9.-]+\.[A-Za-z]{2,24}
         (?![\w-])""",
     re.X,
@@ -72,3 +79,58 @@ def redact_description(
     new_html, html_hit = redact_text(description_html)
     new_text, text_hit = redact_text(description_text)
     return new_html, new_text, html_hit or text_hit
+
+
+#: §15.2 / V1 B1 / V3 S4: `includeRawJson` used to attach the untouched provider payload,
+#: so a run with `redactContacts: true` shipped the redacted ad body *and* the recruiter's
+#: phone number in the same dataset row (`mailbox_email` is on every live Recruitee offer).
+#: Contact-shaped keys go at every depth, whatever the provider calls them.
+_RAW_DENY = re.compile(
+    r"^(creator|activeJobApplication|recruiter|hiringManager|hiring_manager|contact|owner)$"
+    r"|e?mail|phone|tel",
+    re.IGNORECASE,
+)
+
+#: Ad bodies live inside `raw` too, and the denylist above does not touch them. Dropping
+#: them is the honest option: the buyer already has the body through `includeDescription`,
+#: where redaction is applied and `descriptionRedacted` says so.
+_RAW_BODY_KEYS = frozenset(
+    {
+        "content",
+        "description",
+        "descriptionPlain",
+        "descriptionHtml",
+        "descriptionBody",
+        "descriptionBodyPlain",
+        "additional",
+        "additionalPlain",
+        "jobDescriptions",
+        "requirements",
+        "lists",
+    }
+)
+
+#: Provider payloads are shallow; the bound is a cycle/blow-up guard, not a policy.
+_RAW_MAX_DEPTH = 8
+
+
+def strip_contact_fields(value: Any, *, redact: bool = True, depth: int = 0) -> Any:
+    """Drop contact-shaped and body keys from a provider payload, at every depth.
+
+    ``redact`` additionally runs :func:`redact_text` over the remaining string leaves, so
+    an address written into an unrelated field (a `notes` blob, a custom question) cannot
+    ride out under a key the denylist never heard of.
+    """
+    if depth > _RAW_MAX_DEPTH:
+        return None
+    if isinstance(value, dict):
+        return {
+            key: strip_contact_fields(item, redact=redact, depth=depth + 1)
+            for key, item in value.items()
+            if not _RAW_DENY.search(str(key)) and str(key) not in _RAW_BODY_KEYS
+        }
+    if isinstance(value, list):
+        return [strip_contact_fields(item, redact=redact, depth=depth + 1) for item in value]
+    if redact and isinstance(value, str):
+        return redact_text(value)[0]
+    return value

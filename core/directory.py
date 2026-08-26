@@ -11,19 +11,36 @@ resolved" (one error row each, §5.11 rule 3-4); it never fails the run.
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import logging
 import os
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
 from core.models import Ref
+from core.resolve import valid_slug
 
 logger = logging.getLogger(__name__)
 
-OWNER = os.environ.get("ATS_DIRECTORY_OWNER", "ats-jobs")
-COMMIT = os.environ.get("ATS_DIRECTORY_COMMIT", "main")
+#: The two env knobs are validated before they are formatted into a URL: jsDelivr serves
+#: *any* GitHub repo, so an unchecked owner flips the trusted directory to attacker
+#: content, which S2 then turns into an OOM (V3 S7).
+_OWNER_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
+_COMMIT_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
+
+
+def _checked(value: str, pattern: re.Pattern[str], default: str) -> str:
+    if pattern.match(value):
+        return value
+    logger.warning("ignoring malformed directory source %r", value)
+    return default
+
+
+OWNER = _checked(os.environ.get("ATS_DIRECTORY_OWNER", "ats-jobs"), _OWNER_RE, "ats-jobs")
+COMMIT = _checked(os.environ.get("ATS_DIRECTORY_COMMIT", "main"), _COMMIT_RE, "main")
 
 JSDELIVR_URL = "https://cdn.jsdelivr.net/gh/{owner}/ats-directory@{commit}/companies.jsonl.gz"
 RAW_URL = "https://raw.githubusercontent.com/{owner}/ats-directory/main/companies.jsonl.gz"
@@ -33,11 +50,24 @@ BAKED_PATH = Path(__file__).parent / "data" / "companies.seed.jsonl.gz"
 
 GZIP_MAGIC = b"\x1f\x8b"
 
+#: A 102 kB gzip blob decompresses to 100 MB at ratio 1028x — enough to OOM-kill the
+#: container at every `actor.json` memory tier (V3 S2). `GzipFile.read(n)` inflates
+#: incrementally, so the bomb never lands.
+MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
+
+
+def _gunzip_capped(blob: bytes, limit: int | None = None) -> bytes:
+    limit = MAX_DIRECTORY_BYTES if limit is None else limit
+    out = gzip.GzipFile(fileobj=io.BytesIO(blob)).read(limit + 1)
+    if len(out) > limit:
+        raise ValueError(f"directory exceeds {limit} bytes decompressed")
+    return out
+
 
 def parse_jsonl(blob: bytes) -> list[dict[str, Any]]:
     """companies.jsonl(.gz) -> rows. A corrupt line is skipped, not fatal."""
     if blob[:2] == GZIP_MAGIC:
-        blob = gzip.decompress(blob)
+        blob = _gunzip_capped(blob)
     rows: list[dict[str, Any]] = []
     for line in blob.decode("utf-8", "replace").splitlines():
         line = line.strip()
@@ -93,6 +123,9 @@ class Directory:
             provider = str(row["provider"]).lower()
             if allowed is not None and provider not in allowed:
                 continue
+            if not valid_slug(str(row["slug"])):
+                # A poisoned directory row is an equivalent SSRF vector (V3 S1).
+                continue
             key = (provider, str(row["slug"]))
             if key in seen:
                 continue
@@ -103,6 +136,7 @@ class Directory:
                     slug=str(row["slug"]),
                     site=row.get("site"),
                     region=row.get("region"),
+                    domain=row.get("domain"),
                 )
             )
         return refs
@@ -140,7 +174,8 @@ async def _from_kv(opener: Any) -> bytes | None:
         return value.encode("utf-8")
     if isinstance(value, list):
         return "\n".join(json.dumps(row) for row in value).encode("utf-8")
-    return bytes(value)
+    # `bytes(3_000_000_000)` on an int KV value allocates that many zero bytes (V3 S15).
+    return bytes(value) if isinstance(value, bytes | bytearray | memoryview) else None
 
 
 def _from_disk(path: Path) -> bytes | None:
@@ -154,6 +189,17 @@ async def _default_kv_opener(*, name: str) -> Any:
     from apify import Actor
 
     return await Actor.open_key_value_store(name=name)
+
+
+def _rows(blob: bytes | None) -> list[dict[str, Any]]:
+    """Parse one source, degrading a bomb or a corrupt blob to "this source missed"."""
+    if not blob:
+        return []
+    try:
+        return parse_jsonl(blob)
+    except (ValueError, OSError) as exc:
+        logger.warning("directory source unusable: %s", exc)
+        return []
 
 
 async def load_directory(
@@ -173,18 +219,18 @@ async def load_directory(
 
     for name, url in sources:
         blob = await _from_http(client, url)
-        rows = parse_jsonl(blob) if blob else []
+        rows = _rows(blob)
         if rows:
             return Directory(rows, source=name)
 
     opener = kv_opener if kv_opener is not None else _default_kv_opener
     blob = await _from_kv(opener)
-    rows = parse_jsonl(blob) if blob else []
+    rows = _rows(blob)
     if rows:
         return Directory(rows, source="kv")
 
     blob = _from_disk(baked_path)
-    rows = parse_jsonl(blob) if blob else []
+    rows = _rows(blob)
     if rows:
         return Directory(rows, source="baked")
 

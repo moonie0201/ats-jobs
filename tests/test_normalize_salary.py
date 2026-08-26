@@ -356,3 +356,123 @@ def test_normalize_interval_gives_up_rather_than_guessing():
     assert normalize_interval("fortnightly") is None
     assert normalize_interval(None) is None
     assert normalize_interval(7) is None
+
+
+# --- Greenhouse label-vs-magnitude coherence (live run, §10.2) -------------------------
+
+#: Verkada's real shape: an incoherent "hourly" band carrying an annual number, and the
+#: real annual band beside it. `ranges[0]` used to win, publishing $200,000 per hour.
+VERKADA_MISLABELLED = [
+    {
+        "min_cents": 20000000,
+        "max_cents": 26000000,
+        "currency_type": "USD",
+        "title": "Estimated Hourly Pay Range",
+    },
+    {
+        "min_cents": 16000000,
+        "max_cents": 28000000,
+        "currency_type": "USD",
+        "title": "Estimated Annual Pay Range",
+    },
+]
+
+#: Verkada again: a $1.00 placeholder in the hourly band, the truth in the annual one.
+VERKADA_PLACEHOLDER = [
+    {
+        "min_cents": 100,
+        "max_cents": 100,
+        "currency_type": "USD",
+        "title": "Estimated Hourly Pay Range",
+    },
+    {
+        "min_cents": 22500000,
+        "max_cents": 26500000,
+        "currency_type": "USD",
+        "title": "Estimated Annual Pay Range",
+    },
+]
+
+
+def test_greenhouse_hourly_label_on_an_annual_number_is_not_believed():
+    salary = parse_salary({"pay_input_ranges": VERKADA_MISLABELLED}, None, None)
+    assert (salary.min, salary.max, salary.interval) == (160000, 280000, "year")
+
+
+def test_greenhouse_placeholder_band_loses_to_the_real_one():
+    salary = parse_salary({"pay_input_ranges": VERKADA_PLACEHOLDER}, None, None)
+    assert (salary.min, salary.max, salary.interval) == (225000, 265000, "year")
+
+
+def test_greenhouse_unlabelled_hourly_wage_is_not_called_a_year():
+    """Rocket Lab: `min_cents: 1885` under "Base Pay Range (MD Only)" — no interval word.
+    The old `or "year"` default published a $18.85-per-year driver."""
+    band = [
+        {
+            "min_cents": 1885,
+            "max_cents": 2350,
+            "currency_type": "USD",
+            "title": "Base Pay Range (MD Only)",
+        }
+    ]
+    salary = parse_salary({"pay_input_ranges": band}, None, None)
+    assert (salary.min, salary.max, salary.interval) == (18.85, 23.5, "hour")
+
+
+def test_greenhouse_unlabelled_annual_salary_still_reads_year():
+    band = [
+        {
+            "min_cents": 18000000,
+            "max_cents": 24000000,
+            "currency_type": "USD",
+            "title": "Base Pay Range",
+        }
+    ]
+    assert parse_salary({"pay_input_ranges": band}, None, None).interval == "year"
+
+
+def test_greenhouse_lone_incoherent_band_keeps_the_numbers_and_drops_the_interval():
+    """Verkada's "Head of Government Affairs": $315-$400 under an *annual* label. We do
+    not know what it means, so the interval is null rather than "$315 a year"."""
+    band = [
+        {
+            "min_cents": 31500,
+            "max_cents": 40000,
+            "currency_type": "USD",
+            "title": "Estimated Annual Pay Range",
+        }
+    ]
+    salary = parse_salary({"pay_input_ranges": band}, None, None)
+    assert (salary.min, salary.max, salary.interval, salary.source) == (315, 400, None, "ats")
+
+
+# --- V1 H4: a compensation object with no numbers is a failed step 1 ------------------
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        {"salaryRange": {"currency": "USD"}},  # lever
+        {"salaryRange": {"currency": "USD", "min": None, "max": None, "interval": "per-year"}},
+        {"pay_input_ranges": [{"currency_type": "USD", "title": "Annual"}]},  # greenhouse
+        {"payRangeDetails": [{"currency": "USD"}]},  # rippling
+        {"salary": {"currency": "EUR", "period": "yearly"}},  # recruitee
+    ],
+)
+def test_an_empty_compensation_object_never_claims_the_ats_source(job):
+    """§4.5.3 step 3: nulls beat a wrong provenance, and step 1 must not block step 2."""
+    found = structured_salary(job)
+    assert found is None or found.source is None, found
+
+
+def test_an_empty_compensation_object_lets_the_regex_fallback_run():
+    """`parse_salary` short-circuits on `source == "ats"`; that used to suppress step 2."""
+    parsed = parse_salary(
+        {"salaryRange": {"currency": "USD"}}, "We pay $120,000 - $150,000 per year."
+    )
+    assert (parsed.min, parsed.max, parsed.source) == (120000.0, 150000.0, "parsed")
+
+
+def test_a_populated_compensation_object_still_claims_the_ats_source():
+    parsed = parse_salary({"salaryRange": {"currency": "USD", "min": 100000, "max": 120000}})
+    assert parsed.source == "ats" and parsed.min == 100000

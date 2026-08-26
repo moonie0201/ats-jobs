@@ -12,6 +12,7 @@ by `maxConcurrency` and break the politeness ceiling the legal posture rests on
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import random
 import time
@@ -47,6 +48,33 @@ MAX_RETRIES = 3  # 429 and 5xx
 SOFT_RETRIES = 1  # timeout and malformed body
 BACKOFF_BASE = 1.0  # 1 s -> 2 s -> 4 s
 JITTER = 0.25
+
+#: Hard ceiling on a decompressed response body. `Accept-Encoding: gzip` means httpx
+#: inflates for us, so a 200 kB hostile answer can otherwise land as 200 MB in RAM and
+#: OOM-kill a 1 GB Actor container (V3 S3). The largest live board measured is 4.5 MB.
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
+#: `Retry-After: inf` parsed straight through `float()` used to reach `asyncio.sleep(inf)`
+#: (V3 S5). One header must never cost more than a company's own budget.
+MAX_RETRY_AFTER = 60.0
+
+#: Every host this codebase is allowed to reach: the six ATS APIs and the two CDNs the
+#: company directory is published on. The slug in `recruitee:{slug}.recruitee.com` and
+#: `personio:{slug}.jobs.personio.de` lands in the *hostname*, so a `?`/`#`/`:` in a
+#: `companies` entry used to redirect the whole authority at an attacker's host and port
+#: (V3 S1). `core.resolve.SLUG_RE` is the first gate; this is the one every adapter and
+#: the directory loader share, so a future call site cannot re-open the hole.
+ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (
+    ".greenhouse.io",
+    ".lever.co",
+    ".ashbyhq.com",
+    ".recruitee.com",
+    ".rippling.com",
+    ".personio.de",
+    ".personio.com",
+    ".jsdelivr.net",
+    ".githubusercontent.com",
+)
 
 
 class FetchError(Exception):
@@ -88,14 +116,45 @@ def backoff_delay(attempt: int, *, rng: random.Random | None = None) -> float:
 
 
 def retry_after_seconds(response: httpx.Response) -> float | None:
-    """`Retry-After` in delta-seconds form. The HTTP-date form falls back to backoff."""
+    """`Retry-After` in delta-seconds form. The HTTP-date form falls back to backoff.
+
+    Clamped to :data:`MAX_RETRY_AFTER`: `inf`, `1e309` and `99999999` all parse as floats
+    and would otherwise hand a hostile origin an unbounded `asyncio.sleep` (V3 S5).
+    """
     raw = response.headers.get("retry-after")
     if not raw:
         return None
     try:
-        return max(0.0, float(raw.strip()))
+        value = float(raw.strip())
     except ValueError:
         return None
+    if not math.isfinite(value):
+        return None
+    return min(MAX_RETRY_AFTER, max(0.0, value))
+
+
+def check_host(url: str) -> None:
+    """Refuse anything that is not an https ATS or directory host (V3 S1)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not any(
+        host == suffix.lstrip(".") or host.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES
+    ):
+        raise HttpError(f"refusing non-ATS host: {host!r}", url=url)
+
+
+async def read_capped(response: httpx.Response, limit: int | None = None) -> bytes:
+    """Drain a streamed body, aborting before a decompression bomb is resident (V3 S3)."""
+    limit = MAX_RESPONSE_BYTES if limit is None else limit
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > limit:
+            url = str(response.url)
+            raise ParseError(f"response exceeds {limit} bytes: {url}", url=url)
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class TokenBucket:
@@ -180,13 +239,12 @@ class Client:
         board into a 200 page of marketing HTML. Pass ``follow_redirects=True`` where an
         adapter genuinely wants the target.
         """
+        check_host(url)
         hard = soft = 0
         while True:
             await self.bucket(url).acquire(self._sleep)
             try:
-                response = await self._http.get(
-                    url, params=params, headers=headers, follow_redirects=follow_redirects
-                )
+                response = await self._send(url, params, headers, follow_redirects)
             except httpx.TimeoutException as exc:
                 if soft < SOFT_RETRIES:
                     soft += 1
@@ -219,6 +277,32 @@ class Client:
             if code >= 400:
                 raise HttpError(f"{code}: {url}", url=url, http_status=code)
             return response
+
+    async def _send(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str] | None,
+        follow_redirects: bool,
+    ) -> httpx.Response:
+        """One GET, streamed so :func:`read_capped` can stop a bomb mid-flight (V3 S3).
+
+        The body is re-wrapped in a plain :class:`httpx.Response` so callers keep
+        ``.content`` / ``.json()``; the transfer headers are dropped because they describe
+        the compressed wire body, not the bytes we hand on.
+        """
+        request = self._http.build_request("GET", url, params=params, headers=headers)
+        response = await self._http.send(request, stream=True, follow_redirects=follow_redirects)
+        try:
+            body = await read_capped(response)
+        finally:
+            await response.aclose()
+        kept = [
+            (key, value)
+            for key, value in response.headers.multi_items()
+            if key.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+        ]
+        return httpx.Response(response.status_code, headers=kept, content=body, request=request)
 
     async def get_json(
         self,

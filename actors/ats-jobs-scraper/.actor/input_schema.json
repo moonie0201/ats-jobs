@@ -159,7 +159,7 @@
       "title": "Include raw ATS payload",
       "type": "boolean",
       "editor": "checkbox",
-      "description": "Attach the provider JSON for each job under raw, with contact-shaped fields removed. Large. Useful when you need a field we do not normalize.",
+      "description": "Attach the provider JSON for each job under raw, with contact-shaped fields and ad bodies removed. Large. Useful when you need a field we do not normalize.",
       "default": false
     },
     "dedupe": {
@@ -185,7 +185,7 @@
       "editor": "textfield",
       "description": "Name of the key-value store that holds seen job ids for onlyNewJobs. Use a different key per monitoring task. Stored in your account, never sent anywhere.",
       "default": "ats-jobs-state-default",
-      "pattern": "^[a-zA-Z0-9._-]{3,63}$"
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]{2,62}$"
     },
     "stateRetentionDays": {
       "title": "Forget job ids after N days",

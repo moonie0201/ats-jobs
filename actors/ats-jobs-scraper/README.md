@@ -1,6 +1,6 @@
 # ATS Jobs API — Greenhouse, Lever, Ashby +3
 
-Live job postings straight from six **public ATS APIs** — Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio — normalized into one schema with structured salary. You give it company slugs or career-site URLs; it gives you clean job rows. Seven filters run **before** anything is billed, company summaries and error rows are free, and every company you query is snapshotted daily from the day we first see it. No scraping, no browsers, no proxies, no API keys.
+Live job postings straight from six **public ATS APIs** — Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio — normalized into one schema with structured salary. You give it company slugs or career-site URLs; it gives you clean job rows. Seven filters run **before** anything is billed, company summaries and error rows are free, and `onlyNewJobs` keeps a per-company baseline in your own key-value store so a monitoring run returns only what changed. No scraping, no browsers, no proxies, no API keys.
 
 ## What this ATS jobs API does
 
@@ -44,7 +44,7 @@ Saved input from another job-board Actor runs here unchanged. These input keys a
 | `boardTokens`, `siteNames`, `jobBoardNames` | `companies` |
 | `subdomains`, `companyIdentifiers` | `companies` |
 
-**What you gain:** live boards instead of an index of unknown age; `postedAfter` and per-company filtering that run before billing; structured salary with the currency and interval separated; no contact, recruiter or candidate fields; contact redaction on by default; and a `trackedSince` date on every company row.
+**What you gain:** live boards instead of an index of unknown age; `postedAfter` and per-company filtering that run before billing; structured salary with the currency and interval separated; no contact, recruiter or candidate fields; contact redaction on by default; and a `trackedSince` date on every company row once `onlyNewJobs` is on.
 
 **What you lose, stated plainly:** there is no keyword search without a company list yet. Directory mode — leave `companies` empty and fan out across our public ATS directory — arrives free in the next release, and even then it searches within our directory, not the whole internet. If "find me every Rust job anywhere" is your requirement today, an aggregator is a better fit than this Actor.
 
@@ -181,7 +181,7 @@ Two dataset views are provided: **Jobs** (spreadsheet-ready postings) and **Comp
 
 ## Privacy and contact redaction
 
-- The output has **no contact, recruiter or candidate fields**. Ever. There is nothing to redact in the structured part of a row because none of it is personal data.
+- The output has **no contact, recruiter or candidate fields**. Ever. There is nothing to redact in the structured part of a row because none of it is personal data. `includeRawJson` is held to the same rule: contact-shaped keys and ad bodies are stripped from `raw`, and what is left is run through the same redaction as the description.
 - Description bodies are the employer's own published advertisement text. Employer-written ads — especially German and Dutch ones on Personio and Recruitee — routinely close with a named contact person. With `redactContacts` on (the default) email addresses and phone numbers are stripped from the body before output, and `descriptionRedacted: true` records that something was removed.
 - Nothing is stored outside your own Apify account, and nothing is sent to the developer. The Actor opens no outbound connection to us and embeds no credential of any kind.
 - Your `onlyNewJobs` state lives in a key-value store in your account, under the name you choose.
@@ -206,7 +206,7 @@ Turn on `onlyNewJobs` and give each monitoring task its own `stateKey`. The firs
 
 ## Hiring history
 
-Every company you query is snapshotted daily from the day we first see it, and `trackedSince` on each company row tells you when that started. Hiring velocity, time-to-fill and removed-posting history are built from those snapshots. Ask us in 90 days how fast a company is hiring — a dedicated history Actor is on the roadmap, and the data behind it is accruing now.
+Turn on `onlyNewJobs` and the Actor keeps a baseline of seen job ids and per-company first-seen dates in a named key-value store **in your own account**; `trackedSince` on each company row is the date that company first appeared under your `stateKey`. Nothing is snapshotted on our side today. Hiring velocity, time-to-fill and removed-posting history need a dedicated history Actor built on daily snapshots — that is on the roadmap, not in this Actor.
 
 ## Integrations: n8n, Make, Zapier, Clay, Google Sheets, Slack
 
@@ -247,7 +247,7 @@ Set `maxJobs` on every call, and set `ACTOR_MAX_TOTAL_CHARGE_USD` on the run to 
 
 ## Related Actors
 
-Per-ATS listings with the same engine and the same schema — Greenhouse jobs, Lever jobs and Ashby jobs — plus a Workday listing, and a jobs-history listing built on the daily snapshots described above.
+Per-ATS listings with the same engine and the same schema — Greenhouse jobs, Lever jobs and Ashby jobs — plus a Workday listing, and a jobs-history listing built on daily snapshots.
 
 ## FAQ
 
