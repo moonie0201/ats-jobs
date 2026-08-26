@@ -53,8 +53,9 @@ the words `private request` — nothing else, no personal details. We reply ther
 private channel within one business day and handle the substance off the public record.
 Requests are actioned within **48 hours** of us having enough information to act.
 
-There is no dedicated privacy mailbox yet; the GitHub route above is the real, monitored
-channel and we would rather publish a channel that works than an address that does not.
+Privacy requests (access, erasure, objection) go to **`mooniegilog@gmail.com`** with `privacy` in the
+subject. The GitHub routes in `TAKEDOWN.md` reach the same person but are public; use email
+for anything about a person.
 
 ## Retention
 

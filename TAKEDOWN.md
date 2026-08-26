@@ -6,7 +6,10 @@ to a standard we set.
 
 ## How to reach us
 
-**Open an issue**, whichever is closer to what you want removed:
+**Email `mooniegilog@gmail.com`** — this is the fastest route and the right one for anything involving
+personal data or that you do not want on a public page. Put `takedown` in the subject.
+
+Or **open an issue**, whichever is closer to what you want removed:
 
 - Code, test fixtures, Actor output, or anything about the scraper —
   <https://github.com/moonie0201/ats-jobs/issues>
