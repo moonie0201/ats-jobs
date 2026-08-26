@@ -1,0 +1,67 @@
+[
+ {
+  "uuid": "787eb126-aeb3-4077-a1ab-ee76ebdb8bab",
+  "name": "Financial Controller",
+  "department": {
+   "id": "General & Administrative",
+   "label": "General & Administrative"
+  },
+  "url": "https://ats.rippling.com/atlas-data-storage/jobs/787eb126-aeb3-4077-a1ab-ee76ebdb8bab",
+  "workLocation": {
+   "label": "South San Francisco, CA",
+   "id": "South San Francisco, CA"
+  }
+ },
+ {
+  "uuid": "199e4ea1-1c96-4cff-936f-50510faf0a4d",
+  "name": "Head of HR",
+  "department": {
+   "id": "General & Administrative",
+   "label": "General & Administrative"
+  },
+  "url": "https://ats.rippling.com/atlas-data-storage/jobs/199e4ea1-1c96-4cff-936f-50510faf0a4d",
+  "workLocation": {
+   "label": "South San Francisco, CA",
+   "id": "South San Francisco, CA"
+  }
+ },
+ {
+  "uuid": "1a026856-87ac-433e-83cc-7d48912b77a4",
+  "name": "Lab Manager",
+  "department": {
+   "id": "Research & Development",
+   "label": "Research & Development"
+  },
+  "url": "https://ats.rippling.com/atlas-data-storage/jobs/1a026856-87ac-433e-83cc-7d48912b77a4",
+  "workLocation": {
+   "label": "South San Francisco, CA",
+   "id": "South San Francisco, CA"
+  }
+ },
+ {
+  "uuid": "9f16744f-5a23-41a0-a8f2-3dce66bb7194",
+  "name": "Research Associate, Protein Engineering",
+  "department": {
+   "id": "Research & Development",
+   "label": "Research & Development"
+  },
+  "url": "https://ats.rippling.com/atlas-data-storage/jobs/9f16744f-5a23-41a0-a8f2-3dce66bb7194",
+  "workLocation": {
+   "label": "South San Francisco, CA",
+   "id": "South San Francisco, CA"
+  }
+ },
+ {
+  "uuid": "8c373b84-e444-48d6-8e3c-dae8204ef844",
+  "name": "Research Associate, Supervisor Synthesis Production",
+  "department": {
+   "id": "Research & Development",
+   "label": "Research & Development"
+  },
+  "url": "https://ats.rippling.com/atlas-data-storage/jobs/8c373b84-e444-48d6-8e3c-dae8204ef844",
+  "workLocation": {
+   "label": "South San Francisco, CA",
+   "id": "South San Francisco, CA"
+  }
+ }
+]

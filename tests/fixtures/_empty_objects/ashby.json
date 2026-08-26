@@ -1,0 +1,59 @@
+{
+ "jobs": [
+  {
+   "id": "empty-nulls",
+   "title": "Everything Null",
+   "department": null,
+   "team": null,
+   "employmentType": null,
+   "location": null,
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": null,
+   "isListed": true,
+   "isRemote": null,
+   "workplaceType": null,
+   "address": {},
+   "jobUrl": null,
+   "applyUrl": null,
+   "compensation": {},
+   "descriptionHtml": null,
+   "descriptionPlain": null
+  },
+  {
+   "id": "empty-absent",
+   "title": "Everything Absent"
+  },
+  {
+   "id": "empty-nested",
+   "title": "Nested Objects Empty",
+   "department": "",
+   "team": "",
+   "employmentType": {},
+   "location": "   ",
+   "secondaryLocations": [
+    {},
+    {
+     "location": null,
+     "address": {
+      "postalAddress": {}
+     }
+    }
+   ],
+   "publishedAt": "",
+   "isListed": true,
+   "address": {
+    "postalAddress": {}
+   },
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   },
+   "descriptionHtml": "",
+   "descriptionPlain": ""
+  }
+ ],
+ "apiVersion": "1"
+}
