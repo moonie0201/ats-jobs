@@ -1,0 +1,18 @@
+{
+  "actorSpecification": 1,
+  "name": "lever-jobs-scraper",
+  "title": "Lever Jobs API Scraper",
+  "description": "Live job postings from the Lever public postings API (api.lever.co v0), global and EU hosts. Site names or careers URLs in, one normalized schema out with structured salary and a remote flag. No scraping, no proxies, no API keys.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

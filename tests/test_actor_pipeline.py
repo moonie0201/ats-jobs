@@ -8,23 +8,16 @@ Actor — no network, no Apify platform.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-ACTOR = ROOT / "actors" / "ats-jobs-scraper"
-sys.path.append(str(ACTOR))
-
-from src import main as shell  # noqa: E402
-
-from core.billing import Billing  # noqa: E402
-from core.filters import Filters  # noqa: E402
-from core.models import STATUSES, JobRecord, Ref  # noqa: E402
-from core.state import SeenState  # noqa: E402
-from tests.test_billing import FakeActor  # noqa: E402
+from core import run as shell
+from core.billing import Billing
+from core.filters import Filters
+from core.models import STATUSES, JobRecord, Ref
+from core.state import SeenState
+from tests.test_billing import FakeActor
 
 
 def ctx_for(actor: FakeActor, **overrides: Any) -> shell.RunCtx:

@@ -1,0 +1,253 @@
+{
+  "title": "Lever Jobs API Scraper",
+  "description": "Fetch live job postings from Lever using its public postings API. Give it site names (palantir) or Lever careers URLs. Site names are case-sensitive.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "companies": {
+      "title": "Lever site names or careers URLs",
+      "type": "array",
+      "editor": "stringList",
+      "description": "One per line. A Lever site name (palantir) or a Lever careers URL (https://jobs.lever.co/palantir). Site names are case-sensitive: palantir works, Palantir returns 404. EU-hosted boards (jobs.eu.lever.co) are tried automatically. An entry for another ATS is refused with a free error row - use the multi-ATS Actor ats-jobs-scraper for those.",
+      "prefill": [
+        "palantir",
+        "matchgroup"
+      ],
+      "minItems": 1,
+      "maxItems": 2000,
+      "uniqueItems": true
+    },
+    "maxJobs": {
+      "title": "Max jobs (total)",
+      "type": "integer",
+      "editor": "number",
+      "description": "Hard stop after this many charged job rows. Your main cost control. Companies not reached before the cap are never charged. Set 0 for no limit.",
+      "default": 1000,
+      "minimum": 0,
+      "maximum": 200000,
+      "unit": "jobs"
+    },
+    "maxJobsPerCompany": {
+      "title": "Max jobs per company",
+      "type": "integer",
+      "editor": "number",
+      "description": "Stop after this many jobs from a single company. Useful when one enterprise board would eat the whole budget. Set 0 for no limit.",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 20000,
+      "unit": "jobs"
+    },
+    "titleKeywords": {
+      "title": "Title must contain any of",
+      "type": "array",
+      "editor": "stringList",
+      "description": "Case-insensitive substring match on the job title. Empty = no title filter. Filtering happens before billing, so filtered-out jobs are free.",
+      "sectionCaption": "Filters (applied before billing)",
+      "sectionDescription": "All filters run locally on the fetched JSON. Jobs removed by a filter are never charged, and a company whose jobs were all filtered out costs you nothing at all.",
+      "default": []
+    },
+    "excludeTitleKeywords": {
+      "title": "Title must NOT contain any of",
+      "type": "array",
+      "editor": "stringList",
+      "description": "Case-insensitive substring match. Applied after titleKeywords. Example: intern, contract, principal.",
+      "default": []
+    },
+    "locationKeywords": {
+      "title": "Location must contain any of",
+      "type": "array",
+      "editor": "stringList",
+      "description": "Case-insensitive substring match on the raw location text and on the parsed city, region and country. A two-letter entry is matched exactly against the country code instead, so it cannot hit inside a word. Example: Berlin, Germany, EMEA.",
+      "default": []
+    },
+    "remoteOnly": {
+      "title": "Remote jobs only",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Keep only jobs where remote could be positively determined (remote = true). Jobs with unknown remote status are dropped.",
+      "default": false
+    },
+    "departments": {
+      "title": "Departments",
+      "type": "array",
+      "editor": "stringList",
+      "description": "Case-insensitive substring match on the department or team name as reported by the ATS. Empty = all departments.",
+      "default": []
+    },
+    "employmentTypes": {
+      "title": "Employment types",
+      "type": "array",
+      "editor": "select",
+      "description": "Keep only these normalized employment types. Jobs whose type is unknown are kept unless you also enable strictEmploymentType.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "full_time",
+          "part_time",
+          "contract",
+          "temporary",
+          "internship",
+          "other"
+        ],
+        "enumTitles": [
+          "Full-time",
+          "Part-time",
+          "Contract",
+          "Temporary",
+          "Internship",
+          "Other"
+        ]
+      },
+      "default": []
+    },
+    "strictEmploymentType": {
+      "title": "Only ATS-confirmed employment types",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Keep only jobs whose employment type came from the ATS itself, dropping both unknowns and types we guessed from the job title. Lever reports a commitment on most postings, so this filter is usually safe here.",
+      "default": false
+    },
+    "postedAfter": {
+      "title": "Posted after",
+      "type": "string",
+      "editor": "datepicker",
+      "dateType": "absoluteOrRelative",
+      "description": "Keep only jobs posted at or after this date, e.g. 2026-08-01 or '7 days'. Jobs with no posting date from the ATS are kept and flagged postedAtSource=null.",
+      "nullable": true
+    },
+    "includeDescription": {
+      "title": "Include job description",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "On by default, at no extra cost: Lever returns the ad body in the same response we already make, and you are billed per row either way. Makes items about 10x larger - turn it off for a slimmer dataset. The body stays the employer's copyrighted text. Contact details are stripped unless you turn redactContacts off. Executable markup (`<script>`, `<iframe>`, `on*=`, `javascript:`) is removed; the remaining HTML is the employer's own, so render it sandboxed.",
+      "sectionCaption": "Output",
+      "default": true
+    },
+    "descriptionFormat": {
+      "title": "Description format",
+      "type": "string",
+      "editor": "select",
+      "description": "Only used when includeDescription is on.",
+      "enum": [
+        "html",
+        "text",
+        "both"
+      ],
+      "enumTitles": [
+        "HTML only",
+        "Plain text only",
+        "Both"
+      ],
+      "default": "text"
+    },
+    "redactContacts": {
+      "title": "Redact contact details from descriptions",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Strip contact details from the ad body: email addresses, phone numbers, LinkedIn/Xing/WhatsApp/Calendly/Telegram links and handles, and a person's name where the ad labels it as a contact (`Ansprechpartner:`, `Kontakt:`, `Contactpersoon:`, `Contact:`, `Hiring manager:`, `Recruiter:`). On by default — EU ads routinely close with a named contact. It does not catch a name in running prose: no label, no pattern. `descriptionRedacted` on each row says whether anything was removed.",
+      "default": true
+    },
+    "outputProfile": {
+      "title": "Output profile",
+      "type": "string",
+      "editor": "select",
+      "description": "minimal = title, company, location, url, postedAt. compact = minimal plus remote, department, employmentType, salary. full = every field. Use minimal for AI agents to cut token cost.",
+      "enum": [
+        "full",
+        "compact",
+        "minimal"
+      ],
+      "enumTitles": [
+        "Full",
+        "Compact",
+        "Minimal"
+      ],
+      "default": "full"
+    },
+    "includeCompanySummary": {
+      "title": "Add one summary row per company",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Adds a free company_summary row with total jobs found, jobs kept after filters, new jobs, duplicates dropped and top departments. Summary rows are never charged.",
+      "default": true
+    },
+    "includeRawJson": {
+      "title": "Include raw ATS payload",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Attach the provider JSON for each job under raw, with contact-shaped fields and ad bodies removed. Large. Useful when you need a field we do not normalize.",
+      "default": false
+    },
+    "dedupe": {
+      "title": "Deduplication",
+      "type": "string",
+      "editor": "select",
+      "description": "id = drop repeats of the same ATS job id (always on). content = also merge same title + company + location + requisition id. May merge genuinely separate openings for the same role; leave off unless you see duplicates.",
+      "enum": [
+        "id",
+        "content"
+      ],
+      "enumTitles": [
+        "By ATS job id",
+        "By id and content"
+      ],
+      "default": "id"
+    },
+    "onlyNewJobs": {
+      "title": "Only jobs not seen in a previous run",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "Compares against the ids stored under stateKey in your own named key-value store and outputs only new ones. The first run stores the baseline and outputs everything.",
+      "sectionCaption": "Monitoring",
+      "default": false
+    },
+    "stateKey": {
+      "title": "State key",
+      "type": "string",
+      "editor": "textfield",
+      "description": "Name of the key-value store that holds seen job ids for onlyNewJobs. Use a different key per monitoring task. Stored in your account, never sent anywhere.",
+      "default": "lever-jobs-state-default",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]{2,62}$"
+    },
+    "stateRetentionDays": {
+      "title": "Forget job ids after N days",
+      "type": "integer",
+      "editor": "number",
+      "description": "Ids not seen for this many days are dropped from the state so it cannot grow forever. 0 keeps everything.",
+      "default": 90,
+      "minimum": 0,
+      "maximum": 730,
+      "unit": "days"
+    },
+    "maxConcurrency": {
+      "title": "Max concurrent companies",
+      "type": "integer",
+      "editor": "number",
+      "description": "Lower this if Lever starts rate limiting. Per-host request rate is capped separately at 1 request per second for api.lever.co regardless of this value, so raising it past a handful of companies buys little.",
+      "sectionCaption": "Advanced",
+      "default": 8,
+      "minimum": 1,
+      "maximum": 32
+    },
+    "requestTimeoutSecs": {
+      "title": "Request timeout",
+      "type": "integer",
+      "editor": "number",
+      "description": "Per HTTP request timeout in seconds.",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 120,
+      "unit": "s"
+    },
+    "failOnAllErrors": {
+      "title": "Fail the run if every company failed",
+      "type": "boolean",
+      "editor": "checkbox",
+      "description": "When on, a run where no company returned any job exits with FAILED instead of SUCCEEDED. Useful in scheduled pipelines.",
+      "default": false
+    }
+  },
+  "required": [
+    "companies"
+  ]
+}

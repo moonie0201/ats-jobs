@@ -1,0 +1,18 @@
+{
+  "actorSpecification": 1,
+  "name": "greenhouse-jobs-scraper",
+  "title": "Greenhouse Jobs API Scraper",
+  "description": "Live job postings from the Greenhouse public job-board API (boards-api.greenhouse.io). Board tokens or careers URLs in, one normalized schema out with structured pay-transparency ranges. No scraping, no proxies, no API keys.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

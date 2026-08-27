@@ -181,6 +181,43 @@ def check_actor_description(
         errors.append(f"{label}: description drops the Store listing's {absent} clause")
 
 
+#: §3.2: a per-ATS listing is "the MVP's input schema minus the provider selector". Only
+#: that one key may differ, so the check is a set comparison against A1 — a field added to
+#: A1 and forgotten on the three derived listings is the exact drift §13.5 Congruency
+#: penalises, and it is invisible to every other check in this file.
+MULTI_ATS_ACTOR = "ats-jobs-scraper"
+PROVIDER_SELECTOR = "providers"
+
+
+def check_pinned_input(
+    actor_dir: Path, doc: dict[str, Any], providers: list[str], errors: list[str]
+) -> None:
+    """A single-provider Actor's input schema == A1's, minus `providers`."""
+    properties = doc.get("properties", {})
+    reference = ACTORS_DIR / MULTI_ATS_ACTOR / ".actor" / "input_schema.json"
+    if (
+        actor_dir.name == MULTI_ATS_ACTOR
+        or len(providers) != 1
+        or PROVIDER_SELECTOR in properties
+        or not reference.exists()
+    ):
+        return
+    label = f"{actor_dir.name}/input_schema.json"
+    expected = set(json.loads(reference.read_text(encoding="utf-8"))["properties"])
+    expected.discard(PROVIDER_SELECTOR)
+    actual = set(properties)
+    for name in sorted(expected - actual):
+        errors.append(f"{label}: missing field '{name}' that {MULTI_ATS_ACTOR} has")
+    for name in sorted(actual - expected):
+        errors.append(f"{label}: field '{name}' is not in {MULTI_ATS_ACTOR}")
+    state_key = properties.get("stateKey", {}).get("default")
+    if state_key and not state_key.startswith(providers[0]):
+        errors.append(
+            f"{actor_dir.name}/input_schema.json: stateKey default {state_key!r} is shared "
+            f"with another Actor; namespace it with '{providers[0]}'"
+        )
+
+
 def check_readme_providers(readme: Path, providers: list[str], errors: list[str]) -> None:
     text = readme.read_text(encoding="utf-8").casefold()
     missing = [p for p in providers if p.casefold() not in text]
@@ -238,11 +275,19 @@ def validate_actor(actor_dir: Path, errors: list[str]) -> None:
             f"vs dataset_schema {dataset_enum}"
         )
 
+    # A2–A4 pin the provider (§3.2), so they carry no `providers` selector at all and the
+    # enum above is empty for them. Falling back to the dataset enum is what keeps the
+    # Congruency checks below running on the per-ATS listings instead of silently
+    # skipping them — the listings whose whole selling point is naming one ATS.
+    providers = input_enum or dataset_enum
+    if "input_schema.json" in docs:
+        check_pinned_input(actor_dir, docs["input_schema.json"], providers, errors)
+
     readme = actor_dir / "README.md"
-    if input_enum and readme.exists():
-        check_readme_providers(readme, input_enum, errors)
-    if input_enum and actor_json is not None:
-        check_actor_description(actor_json, f"{actor_dir.name}/actor.json", input_enum, errors)
+    if providers and readme.exists():
+        check_readme_providers(readme, providers, errors)
+    if providers and actor_json is not None:
+        check_actor_description(actor_json, f"{actor_dir.name}/actor.json", providers, errors)
 
 
 def main() -> int:

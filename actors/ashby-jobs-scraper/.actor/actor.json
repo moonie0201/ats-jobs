@@ -1,0 +1,18 @@
+{
+  "actorSpecification": 1,
+  "name": "ashby-jobs-scraper",
+  "title": "Ashby Jobs API Scraper",
+  "description": "Live job postings from the Ashby public job-board API (api.ashbyhq.com posting-api). Job-board names or careers URLs in, one normalized schema out with structured compensation and a remote flag. No scraping, no proxies, no API keys.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

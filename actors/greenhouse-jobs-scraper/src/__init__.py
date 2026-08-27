@@ -1,0 +1,5 @@
+"""Actor shell for `greenhouse-jobs-scraper` (SPEC v2 §3.2).
+
+All logic lives in ``core.run``; this package only pins the provider to Greenhouse.
+``python -m src.main`` and ``python -m src`` both start it (§9.2 Dockerfile CMD).
+"""

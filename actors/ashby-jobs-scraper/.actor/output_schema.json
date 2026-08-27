@@ -1,0 +1,12 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Ashby jobs output",
+  "properties": {
+    "jobs": {
+      "type": "string",
+      "title": "Jobs",
+      "description": "All Ashby job postings from this run as a JSON array.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items?clean=true"
+    }
+  }
+}

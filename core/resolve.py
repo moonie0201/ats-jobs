@@ -146,9 +146,27 @@ def host_of(entry: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def needs_directory(entry: str) -> bool:
+def pinned_ref(entry: str, pin: str | None) -> Ref | None:
+    """§3.2: on a per-ATS Actor a bare token is that provider's own board slug.
+
+    The multi-ATS Actor must never guess which of six providers an unprefixed token
+    belongs to (§5.11 rule 5), which is why it needs the directory. A pinned Actor has
+    nothing to guess: `anthropic` on the Greenhouse listing is the Greenhouse board
+    `anthropic`, and that is the only input shape its buyers will type.
+    """
+    raw = entry.strip()
+    if not pin or looks_like_url(raw) or not valid_slug(raw):
+        return None
+    return Ref(provider=pin, slug=raw, input=entry)
+
+
+def needs_directory(entry: str, pin: str | None = None) -> bool:
     """True when resolving this entry requires the directory (§6.6 lazy-load hook)."""
-    return parse_prefix(entry) is None and parse_url(entry) is None
+    return (
+        parse_prefix(entry) is None
+        and parse_url(entry) is None
+        and pinned_ref(entry, pin) is None
+    )
 
 
 def resolve(
@@ -156,18 +174,29 @@ def resolve(
     *,
     providers: Sequence[str] | None = None,
     directory: DirectoryLookup | None = None,
+    pin: str | None = None,
 ) -> Ref | Unresolved:
     """One entry -> Ref, or an Unresolved carrying the §5.12 status for its error row.
 
     ``providers`` restricts directory lookups only; an explicit prefix or URL always wins
-    (§4.1, §5.11).
+    (§4.1, §5.11). ``pin`` is the single-ATS mode of §3.2: bare tokens become that
+    provider's slugs, and another provider's URL or prefix is refused by name rather than
+    fetched — a Lever board delivered by the Greenhouse listing is a Congruency failure
+    the buyer pays for.
     """
     raw = entry.strip()
     if not raw:
         return Unresolved(entry, "not_found", "empty entry")
 
-    ref = parse_prefix(raw) or parse_url(raw)
+    ref = parse_prefix(raw) or parse_url(raw) or pinned_ref(raw, pin)
     if ref is not None:
+        if pin and ref.provider != pin:
+            return Unresolved(
+                entry,
+                "not_found",
+                f"this Actor reads {pin} boards only; {entry!r} is a {ref.provider} board. "
+                "Use the multi-ATS Actor (ats-jobs-scraper) for other providers.",
+            )
         return ref
 
     urlish = looks_like_url(raw)

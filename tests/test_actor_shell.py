@@ -1,7 +1,7 @@
 """Checks for the Actor shell itself: input handling, record shaping, free row shapes.
 
 The pipeline's shared logic is covered where it lives (`test_filters.py`,
-`test_billing.py`, `test_state.py`); this file locks down what only `src/main.py` does —
+`test_billing.py`, `test_state.py`); this file locks down what only `core/run.py` does —
 competitor key aliases, input defaults, the output switches, and the dataset keys the
 free `company_summary` / `error` rows emit.
 """
@@ -9,18 +9,13 @@ free `company_summary` / `error` rows emit.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-ACTOR = ROOT / "actors" / "ats-jobs-scraper"
-# Appended, never prepended: `scripts/sync_actor_files.py` drops a build copy of `core/`
-# into the Actor directory, and prepending would shadow the real one under test (V1 B2).
-sys.path.append(str(ACTOR))
-
-from src.main import (  # noqa: E402
+from core.models import JobRecord, Ref
+from core.providers import AdapterNotFound, get_adapter
+from core.run import (
     NUMERIC_BOUNDS,
     RunCtx,
     dedupe,
@@ -31,10 +26,10 @@ from src.main import (  # noqa: E402
     summary_item,
     top_departments,
 )
+from core.state import SeenState
 
-from core.models import JobRecord, Ref  # noqa: E402
-from core.providers import AdapterNotFound, get_adapter  # noqa: E402
-from core.state import SeenState  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
+ACTOR = ROOT / "actors" / "ats-jobs-scraper"
 
 DATASET_FIELDS = set(
     json.loads((ACTOR / ".actor" / "dataset_schema.json").read_text(encoding="utf-8"))["fields"][
