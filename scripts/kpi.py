@@ -27,7 +27,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 
-ACTOR = "aZfd1nEuYfHNDz2mt"
+ACTOR = os.environ.get("KPI_ACTOR", "aZfd1nEuYfHNDz2mt")
 API = "https://api.apify.com/v2"
 # §16.2 decision function + the D14 gate this script is asked to report on.
 GO_PAID_RUNS, GO_ACCOUNTS, KILL_RUNS, KILL_USERS_PER_DAY = 10, 3, 30, 0.7
