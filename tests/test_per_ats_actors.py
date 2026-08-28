@@ -101,9 +101,7 @@ async def test_actor_delivers_valid_rows_and_charges_only_job(provider, fixture,
 
     async with client as http:
         with respx.mock:
-            respx.get(url).mock(
-                return_value=httpx.Response(200, json=fixture(provider, payload))
-            )
+            respx.get(url).mock(return_value=httpx.Response(200, json=fixture(provider, payload)))
             refs = await shell.resolve_all([slug], http, ctx)
             assert [(r.provider, r.slug) for r in refs] == [(provider, slug)]
             await shell.process_company(refs[0], http, ctx)
@@ -177,9 +175,12 @@ def test_the_shipped_entrypoint_pins_the_provider_it_is_named_for(provider):
     )
     assert "providers" not in schema["properties"], "§3.2: the selector is removed, not defaulted"
     assert schema["properties"]["stateKey"]["default"] == f"{provider}-jobs-state-default"
-    assert json.loads(
-        (actor_dir(provider) / ".actor" / "actor.json").read_text(encoding="utf-8")
-    )["name"] == name
+    assert (
+        json.loads((actor_dir(provider) / ".actor" / "actor.json").read_text(encoding="utf-8"))[
+            "name"
+        ]
+        == name
+    )
 
 
 @pytest.mark.parametrize("provider", sorted(ACTORS))

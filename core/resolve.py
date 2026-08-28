@@ -163,9 +163,7 @@ def pinned_ref(entry: str, pin: str | None) -> Ref | None:
 def needs_directory(entry: str, pin: str | None = None) -> bool:
     """True when resolving this entry requires the directory (§6.6 lazy-load hook)."""
     return (
-        parse_prefix(entry) is None
-        and parse_url(entry) is None
-        and pinned_ref(entry, pin) is None
+        parse_prefix(entry) is None and parse_url(entry) is None and pinned_ref(entry, pin) is None
     )
 
 
