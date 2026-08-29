@@ -181,8 +181,22 @@ def _ck(row: dict[str, Any]) -> tuple[str, str, str]:
     return (str(row.get("d")), str(row.get("provider")), str(row.get("company")))
 
 
+def first_days(counts: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    """(provider, company) -> earliest measured day. Every counts row is ~4 KB gzipped per
+    shard-day, so reading all of them to find each board's baseline is cheap."""
+    out: dict[tuple[str, str], str] = {}
+    for c in counts:
+        key = (str(c.get("provider")), str(c.get("company")))
+        day = str(c.get("d"))
+        if key not in out or day < out[key]:
+            out[key] = day
+    return out
+
+
 def summarise(
-    counts: list[dict[str, Any]], events: list[dict[str, Any]]
+    counts: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    first_day: dict[tuple[str, str], str] | None = None,
 ) -> tuple[list[dict[str, Any]], set[tuple[str, str, str]]]:
     """counts + events -> one row per *measured* company-day, and the suppressed keys.
 
@@ -202,6 +216,17 @@ def summarise(
     # measurement of a company-day is the one that matches the events we just read.
     measured = {_ck(c): c for c in counts}
 
+    # A board's first measured day marks every posting `added` (there is no earlier
+    # snapshot to diff against). That is a first sighting, not hiring — publishing it as
+    # `added` misled the 72 h sample on 2026-08-26/27. Emit null instead, so a reader
+    # summing `added` never counts a baseline as growth.
+    # `first_day` must be computed over the WHOLE store, not the window being exported:
+    # a 3-day sample window flagged 08-27 as the baseline for the 385 boards first seen on
+    # 08-26 and blanked their real `added`. Callers pass :func:`first_days`; the fallback
+    # below is only right when `counts` is the full store.
+    if first_day is None:
+        first_day = first_days(counts)
+
     rows: list[dict[str, Any]] = []
     suppressed: set[tuple[str, str, str]] = set()
     for key, count in sorted(measured.items()):
@@ -211,15 +236,16 @@ def summarise(
             suppressed.add(key)
             continue
         day, provider, company = key
+        baseline = first_day[(provider, company)] == day
         rows.append(
             {
                 "d": day,
                 "provider": provider,
                 "company": company,
                 "open": open_now,
-                "added": added,
+                "added": None if baseline else added,
                 "removed": removed,
-                "net": added - removed,
+                "net": None if baseline else added - removed,
             }
         )
     return rows, suppressed
@@ -366,10 +392,16 @@ def main(argv: list[str] | None = None) -> int:
             since = stored[-SAMPLE_DAYS:][0] if stored else None
         counts = read_jsonl(args.store, token, day_keys(keys, "counts", since, args.until))
         events = read_jsonl(args.store, token, day_keys(keys, "events", since, args.until))
+        # Baselines come from every counts day in the store, never from the window.
+        all_counts = (
+            counts
+            if since is None and args.until is None
+            else read_jsonl(args.store, token, day_keys(keys, "counts", None, None))
+        )
     except urllib.error.HTTPError as exc:
         sys.exit(f"Apify API {exc.code}: {exc.reason} — check APIFY_TOKEN and --store")
 
-    rows, suppressed = summarise(counts, events)
+    rows, suppressed = summarise(counts, events, first_days(all_counts))
     # `export(sample=True)` never reads `events`, and projecting + sorting a copy of every
     # event in the store is the second-largest cost of a nightly sample run.
     archive = [] if args.sample else trustworthy_events(events, counts, suppressed)
@@ -391,8 +423,9 @@ def main(argv: list[str] | None = None) -> int:
         f"  measured        {len(rows)} company-days over {len({(r['provider'], r['company']) for r in rows})} companies\n"  # noqa: E501
         f"  suppressed      {len(suppressed)} company-days (empty-board chain, not a closure)\n"
         f"  events read     {len(events)}  kept {'n/a (sample)' if args.sample else len(archive)}\n"  # noqa: E501
-        f"  opened/closed   {sum(r['added'] for r in rows)} / {sum(r['removed'] for r in rows)}"
-        f"  net {sum(r['net'] for r in rows)}\n"
+        f"  opened/closed   {sum(r['added'] or 0 for r in rows)} / "
+        f"{sum(r['removed'] for r in rows)}"
+        f"  net {sum(r['net'] or 0 for r in rows)}\n"
         f"  written         {written['rows']} rows, {written['events']} events, "
         f"{written['days']} day partitions"
     )

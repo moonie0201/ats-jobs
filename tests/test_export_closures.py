@@ -153,43 +153,43 @@ def test_a_day_we_failed_to_collect_is_absent_not_zero():
 
 def test_open_zero_with_no_removals_is_a_real_measurement():
     """A board that was already empty is measured, not suppressed — it just has no events."""
-    rows, suppressed = ex.summarise([count(D1, "lever", "quiet", 0)], [])
+    # D1 is the board's baseline day (added/net null); D2 is the first measured day.
+    rows, suppressed = ex.summarise(
+        [count(D1, "lever", "quiet", 0), count(D2, "lever", "quiet", 0)], []
+    )
     assert not suppressed
-    assert rows == [
-        {
-            "d": D1,
-            "provider": "lever",
-            "company": "quiet",
-            "open": 0,
-            "added": 0,
-            "removed": 0,
-            "net": 0,
-        }
-    ]
+    assert rows[1] == {
+        "d": D2,
+        "provider": "lever",
+        "company": "quiet",
+        "open": 0,
+        "added": 0,
+        "removed": 0,
+        "net": 0,
+    }
 
 
 # ----------------------------------------------------------------- shape and maths
 
 
 def test_summary_maths_and_that_changed_events_are_neither():
-    counts = [count(D1, "ashby", "acme", 7)]
+    # D1 is the baseline day; the maths are checked on D2, the first measured day.
+    counts = [count(D1, "ashby", "acme", 6), count(D2, "ashby", "acme", 7)]
     events = [
-        *(event(D1, "ashby", "acme", "added", f"a{i}") for i in range(3)),
-        *(event(D1, "ashby", "acme", "removed", f"r{i}") for i in range(2)),
-        event(D1, "ashby", "acme", "changed", "c1", changed=["t"]),
+        *(event(D2, "ashby", "acme", "added", f"a{i}") for i in range(3)),
+        *(event(D2, "ashby", "acme", "removed", f"r{i}") for i in range(2)),
+        event(D2, "ashby", "acme", "changed", "c1", changed=["t"]),
     ]
     rows, _ = ex.summarise(counts, events)
-    assert rows == [
-        {
-            "d": D1,
-            "provider": "ashby",
-            "company": "acme",
-            "open": 7,
-            "added": 3,
-            "removed": 2,
-            "net": 1,
-        }
-    ]
+    assert rows[1] == {
+        "d": D2,
+        "provider": "ashby",
+        "company": "acme",
+        "open": 7,
+        "added": 3,
+        "removed": 2,
+        "net": 1,
+    }
 
 
 def test_sample_window_is_the_three_most_recent_days():
@@ -260,3 +260,38 @@ def test_csv_renders_none_as_empty_and_changed_as_a_list():
     row = blob.splitlines()[1]
     assert "t|loc" in row
     assert row.endswith(",,t|loc,"), row  # days_open and verified empty, not "None"
+
+
+def test_a_boards_first_measured_day_is_a_baseline_not_growth():
+    """Day one of a board has nothing to diff against, so every posting is `added`.
+    Publishing that as growth misled the 72 h sample; the row keeps `open` and `removed`
+    but `added`/`net` are null. Day two is measured normally."""
+    from scripts.export_closures import summarise
+
+    counts = [
+        {"d": "2026-08-27", "provider": "lever", "company": "acme", "open": 10},
+        {"d": "2026-08-28", "provider": "lever", "company": "acme", "open": 11},
+    ]
+    events = [{"d": "2026-08-27", "provider": "lever", "company": "acme", "ev": "added"}] * 10
+    events += [{"d": "2026-08-28", "provider": "lever", "company": "acme", "ev": "added"}] * 2
+    events += [{"d": "2026-08-28", "provider": "lever", "company": "acme", "ev": "removed"}]
+    rows, _ = summarise(counts, events)
+    by_day = {r["d"]: r for r in rows}
+    assert by_day["2026-08-27"]["added"] is None and by_day["2026-08-27"]["net"] is None
+    assert by_day["2026-08-27"]["open"] == 10 and by_day["2026-08-27"]["removed"] == 0
+    assert by_day["2026-08-28"]["added"] == 2 and by_day["2026-08-28"]["net"] == 1
+
+
+def test_baseline_comes_from_the_whole_store_not_the_export_window():
+    """A board first seen on D1 exported with a D2..D3 window: D2 is a real measured day,
+    so its `added` must survive. Only a store-wide first-day map gets this right."""
+    from scripts.export_closures import first_days, summarise
+
+    all_counts = [count(D1, "lever", "acme", 5), count(D2, "lever", "acme", 6)]
+    window_counts = [count(D2, "lever", "acme", 6)]
+    window_events = [event(D2, "lever", "acme", "added", "n1")]
+    rows, _ = summarise(window_counts, window_events, first_days(all_counts))
+    assert rows[0]["d"] == D2 and rows[0]["added"] == 1
+    # And without the map the same window wrongly reads D2 as a baseline.
+    rows_wrong, _ = summarise(window_counts, window_events)
+    assert rows_wrong[0]["added"] is None
