@@ -39,7 +39,7 @@ def count(day, provider, company, open_):
 
 
 def event(day, provider, company, ev, job_id="j1", **over):
-    """A full 12-key event carrying exactly the free text and identifiers that must never
+    """A full 13-key event carrying exactly the free text and identifiers that must never
     reach the free tier — the test is worthless with placeholder values."""
     return {
         "d": day,
@@ -54,6 +54,7 @@ def event(day, provider, company, ev, job_id="j1", **over):
         "posted": "2026-05-21",
         "days_open": 99,
         "changed": None,
+        "verified": None,
         **over,
     }
 
@@ -258,4 +259,4 @@ def test_csv_renders_none_as_empty_and_changed_as_a_list():
     ).decode()
     row = blob.splitlines()[1]
     assert "t|loc" in row
-    assert row.endswith(",,t|loc"), row  # days_open empty, not "None"
+    assert row.endswith(",,t|loc,"), row  # days_open and verified empty, not "None"

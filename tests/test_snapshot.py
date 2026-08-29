@@ -11,9 +11,11 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
-from core.diff import EVENT_KEYS
+from core.diff import EVENT_KEYS, jhash
 from core.history import HistoryStore, bucket_of, encode, events_key, state_key
 from core.providers import greenhouse
 
@@ -225,7 +227,7 @@ async def test_seven_consecutive_failures_flag_the_company_stale(stub_fetch):
     assert (await run.store.state(bucket))["companies"]["lever:gone"]["stale"] is True
 
 
-async def test_an_empty_board_needs_two_consecutive_runs_before_removals_fire(stub_fetch):
+async def test_an_empty_board_needs_two_consecutive_runs_before_removals_fire(stub_fetch, client):
     bucket = bucket_of("greenhouse", "acme")
     before = {
         "as_of": YESTERDAY,
@@ -246,9 +248,12 @@ async def test_an_empty_board_needs_two_consecutive_runs_before_removals_fire(st
     assert run.events == [], "one empty response must not remove a whole board"
     assert company["status"] == snap.EMPTY_SUSPECT and company["jobs"]
 
-    # Second consecutive empty run (same day here, so `force`): now the removal is real.
+    # Second consecutive empty run (same day here, so `force`): now the removal is real --
+    # once the single-posting endpoint agrees (§7.4 second signal).
     run2 = make_run(store, force=True)
-    await snap.process_bucket(bucket, [entry()], None, run2)
+    with respx.mock:
+        respx.get(GH_JOB).mock(return_value=httpx.Response(404))
+        await snap.process_bucket(bucket, [entry()], client, run2)
     assert [e["ev"] for e in run2.events] == ["removed"]
     assert run2.events[0]["days_open"] == 25
     assert (await store.state(bucket))["companies"]["greenhouse:acme"]["jobs"] == {}
@@ -528,3 +533,290 @@ async def test_events_are_written_before_state_and_only_when_they_grow(stub_fetc
     order.clear()
     await snap.process_bucket(bucket_of("greenhouse", "quiet"), [entry(company="quiet")], None, run)
     assert order == ["state"], "an empty board produced no events; do not rewrite the value"
+
+
+# --- §7.4 second signal for `removed` ----------------------------------------
+
+GH_JOB = "https://boards-api.greenhouse.io/v1/boards/acme/jobs/1"
+
+
+@pytest.fixture
+def client():
+    """A real client with instant sleeps, so respx can serve the verification GETs."""
+    from core.http import make_client
+
+    clock = [0.0]
+
+    async def fake_sleep(delay: float) -> None:
+        clock[0] += delay  # advance the token-bucket clock, or the second GET spins forever
+
+    return make_client(timeout_secs=5, sleep=fake_sleep, clock=lambda: clock[0])
+
+
+def stored(provider="greenhouse", company="acme", **rec):
+    """A store whose bucket holds one job (`"1"`) for the company, posted 2026-08-01."""
+    bucket = bucket_of(provider, company)
+    listed = job("1")  # stored exactly as the feed lists it, so relisting is not a `changed`
+    record = {**listed, "h": jhash(listed), "posted": "2026-08-01", **rec}
+    del record["id"]
+    before = {
+        "as_of": YESTERDAY,
+        "companies": {
+            f"{provider}:{company}": {
+                "status": "ok",
+                "tracked_since": "2026-08-01",
+                "jobs": {"1": record},
+            }
+        },
+    }
+    return bucket, HistoryStore(FakeStore({state_key(bucket): encode(before)}))
+
+
+async def sweep(store, bucket, fetch_result, stub_fetch, client, provider="greenhouse", **cfg):
+    run = make_run(store, force=True, **cfg)
+    stub_fetch({"acme": fetch_result})
+    await snap.process_bucket(bucket, [entry(provider, "acme")], client, run)
+    company = (await store.state(bucket))["companies"][f"{provider}:acme"]
+    return run, company
+
+
+@respx.mock
+async def test_a_404_confirms_the_removal_and_marks_it_verified(stub_fetch, client):
+    route = respx.get(GH_JOB).mock(return_value=httpx.Response(404))
+    bucket, store = stored()
+
+    # A different title, or the §7.5 repost rule would withhold `days_open`.
+    run, company = await sweep(store, bucket, ([job("2", title="SRE")], "ok"), stub_fetch, client)
+
+    assert [(e["ev"], e["verified"]) for e in run.events] == [("added", None), ("removed", True)]
+    assert run.events[1]["days_open"] == 25 and "1" not in company["jobs"]
+    assert route.call_count == 1 and run.statuses["verify_gone"] == 1
+
+
+@respx.mock
+async def test_a_200_never_produces_a_removed_event(stub_fetch, client):
+    """The feed dropped a job the provider still serves: a paging glitch, not a closure.
+    The job stays open, is re-checked next sweep, and reappearing clears the mark."""
+    route = respx.get(GH_JOB).mock(return_value=httpx.Response(200, json={"id": 1}))
+    bucket, store = stored(unverified=2)  # a live answer also ends an unknown streak
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client)
+
+    assert [e["ev"] for e in run.events] == ["added"], "no removed, whatever the feed says"
+    assert company["jobs"]["1"]["omitted"] == 1 and "unverified" not in company["jobs"]["1"]
+    assert run.counts[0]["open"] == 2, "still counted open"
+    assert run.statuses["verify_live"] == 1 and route.call_count == 1
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client)
+    assert run.events == [] and company["jobs"]["1"]["omitted"] == 2, "re-checked every sweep"
+
+    run, company = await sweep(store, bucket, ([job("1"), job("2")], "ok"), stub_fetch, client)
+    assert run.events == [] and "omitted" not in company["jobs"]["1"], "listed again: no mark"
+
+
+@respx.mock
+async def test_an_unreachable_endpoint_is_unknown_until_three_consecutive_sweeps(
+    stub_fetch, client
+):
+    """5xx/429/timeout: no event, keep the job, retry next sweep (§7.4: a blip must never
+    look like a layoff). The third unknown in a row records it as `verified: false`."""
+    from core.http import MAX_RETRIES
+
+    route = respx.get(GH_JOB).mock(return_value=httpx.Response(503))
+    bucket, store = stored()
+
+    for sweep_no in (1, 2):
+        run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client)
+        assert not any(e["ev"] == "removed" for e in run.events), f"sweep {sweep_no}"
+        assert company["jobs"]["1"]["unverified"] == sweep_no
+        assert run.statuses["verify_unknown"] == 1
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client)
+    assert [(e["ev"], e["verified"]) for e in run.events] == [("removed", False)]
+    assert "1" not in company["jobs"]
+    assert route.call_count == 3 * (1 + MAX_RETRIES), "each ask carries the §5.12 retries"
+
+
+@respx.mock
+async def test_the_verification_cap_leaves_the_rest_unknown_and_warns_once(
+    stub_fetch, client, caplog
+):
+    route = respx.get(GH_JOB).mock(return_value=httpx.Response(404))
+    bucket, store = stored()
+
+    run, company = await sweep(
+        store, bucket, ([job("2")], "ok"), stub_fetch, client, maxVerifyRequests=0
+    )
+
+    assert route.call_count == 0 and [e["ev"] for e in run.events] == ["added"]
+    assert company["jobs"]["1"]["unverified"] == 1 and run.statuses["verify_capped"] == 1
+    assert sum("verification cap hit" in r.message for r in caplog.records) == 1
+
+    run, _ = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client, maxVerifyRequests=1)
+    assert route.call_count == 1 and [e["verified"] for e in run.events] == [True]
+
+
+@respx.mock
+async def test_ashby_removals_are_untouched(stub_fetch, client):
+    """No single-posting endpoint: feed membership is the only signal, `verified` is null,
+    and no request is made."""
+    bucket, store = stored("ashby")
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client, "ashby")
+
+    assert [(e["ev"], e["verified"]) for e in run.events] == [("added", None), ("removed", None)]
+    assert "1" not in company["jobs"] and not respx.calls
+    assert sum(run.statuses[k] for k in run.statuses if k.startswith("verify_")) == 0
+
+
+#: Run gydyIo2aYH8j5mWUe, 2026-08-29: 385 companies, `/departments` on, 4 verifies.
+MEASURED_SWEEP_SECS = 784
+MEASURED_SWEEP_USD = 0.0265
+
+
+def test_the_default_cap_covers_a_layoff_day_and_fits_inside_the_run_ceiling():
+    """2026-08-28 removed 1,120 Greenhouse+Lever jobs across four shards; a layoff day
+    doubles that, so the cap must clear 560 per shard or the last buckets of every shard
+    are permanently two days late. Those 560 at Greenhouse's 2 rps on top of the measured
+    sweep must fit both the ceiling and the run deadline; anything past that is cut by
+    the ceiling/deadline check inside `posting_alive`, not by the cap."""
+    cap = snap.DEFAULTS["maxVerifyRequests"]
+    layoff = 2 * 1120 / 4
+    assert cap >= layoff
+    extra = snap.Budget(ceiling_usd=snap.DEFAULTS["costCeilingUsd"], memory_gb=0.5).cost(
+        elapsed=layoff / 2.0
+    )
+    assert MEASURED_SWEEP_USD + extra < snap.DEFAULTS["costCeilingUsd"]
+    assert MEASURED_SWEEP_SECS + layoff / 2.0 < snap.RUN_DEADLINE_SECS
+
+
+def test_the_preflight_admits_the_measured_shard_under_the_default_ceiling():
+    """The 0.025 ceiling would have refused (or stopped) the shard the 2026-08-29 run
+    measured; the guard's own estimate of that run must clear the default."""
+    budget = snap.Budget(ceiling_usd=snap.DEFAULTS["costCeilingUsd"], memory_gb=0.5)
+    assert budget.estimate(385, shard_count=4) < snap.DEFAULTS["costCeilingUsd"]
+    assert MEASURED_SWEEP_USD < snap.DEFAULTS["costCeilingUsd"]
+
+
+@respx.mock
+@pytest.mark.parametrize("guard", ["budget", "deadline"])
+async def test_a_run_past_its_ceiling_or_deadline_stops_asking_mid_bucket(
+    stub_fetch, client, monkeypatch, guard
+):
+    """The verify loop is sequential and both guards were checked only between buckets,
+    so an over-budget run still spent one request per candidate. Past either, a candidate
+    is treated as capped: unknown now, asked again next sweep."""
+    route = respx.get(GH_JOB).mock(return_value=httpx.Response(404))
+    bucket, store = stored()
+    cfg = {}
+    if guard == "budget":
+        cfg["costCeilingUsd"] = 0.0
+    else:
+        monkeypatch.setattr(snap, "RUN_DEADLINE_SECS", -1)
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client, **cfg)
+
+    assert route.call_count == 0 and [e["ev"] for e in run.events] == ["added"]
+    assert company["jobs"]["1"]["unverified"] == 1 and run.statuses["verify_capped"] == 1
+
+
+@respx.mock
+async def test_one_verify_request_is_bounded_by_the_request_timeout_not_the_company_budget(
+    stub_fetch, client, monkeypatch
+):
+    """A 429 with `Retry-After: 60` costs the §5.12 table 3 x 60 s > the 120 s company
+    budget, per candidate, in series: 40 candidates was 80 minutes inside one bucket,
+    past the Actor's timeout. One verify gets one request's worth of time."""
+    import asyncio
+
+    respx.get(GH_JOB).mock(return_value=httpx.Response(429, headers={"Retry-After": "60"}))
+    bucket, store = stored()
+    timeouts: list[float] = []
+    real_wait_for = asyncio.wait_for
+
+    async def spy(aw, timeout):
+        timeouts.append(timeout)
+        return await real_wait_for(aw, timeout=timeout)
+
+    monkeypatch.setattr(snap.asyncio, "wait_for", spy)
+
+    run, company = await sweep(store, bucket, ([job("2")], "ok"), stub_fetch, client)
+
+    assert timeouts == [snap.DEFAULTS["requestTimeoutSecs"]]
+    assert timeouts[0] < snap.COMPANY_BUDGET_SECS
+    assert company["jobs"]["1"]["unverified"] == 1 and run.statuses["verify_unknown"] == 1
+
+
+def test_verify_and_departments_traffic_reach_the_budget():
+    """Transfer the list feed never sees -- `/jobs/{id}` per candidate, `/departments` per
+    Greenhouse board -- must count toward the ceiling and `meta.spend`."""
+    budget = snap.Budget(ceiling_usd=1.0, memory_gb=0.5)
+    before = budget.cost(elapsed=0)
+    budget.extra_bytes += snap.BYTES_PER_VERIFY + snap.BYTES_PER_DEPARTMENTS
+    assert budget.cost(elapsed=0) > before
+
+
+# --- review 2026-08-29: defects found tracing both changes through the sweep ---------
+
+
+@respx.mock
+async def test_a_departments_outage_must_not_erase_the_department_a_later_removal_reports(
+    stub_fetch, client
+):
+    """Day D: `/departments` fails, the adapter yields `dept=None` for the whole board and
+    the diff writes that null into state. Day D+1: the job closes and the `removed` row --
+    the paid product's row -- carries `dept: null` although it was known on D-1. The null
+    is our gap (README, core.diff), so the state must keep the department it knew."""
+    respx.get(GH_JOB).mock(return_value=httpx.Response(404))
+    bucket, store = stored()  # dept "Engineering" known yesterday
+
+    run, company = await sweep(store, bucket, ([job("1", dept=None)], "ok"), stub_fetch, client)
+    assert run.events == []
+    assert company["jobs"]["1"]["dept"] == "Engineering", "an outage null overwrote the state"
+
+    await sweep(store, bucket, ([], "ok"), stub_fetch, client)  # empty_suspect
+    run, _ = await sweep(store, bucket, ([], "ok"), stub_fetch, client)
+    assert [(e["ev"], e["dept"]) for e in run.events] == [("removed", "Engineering")]
+
+
+@respx.mock
+async def test_an_empty_board_keeps_verifying_every_sweep_not_every_other_one(stub_fetch, client):
+    """Board empty (ATS migration / shutdown), endpoint unreachable. After the diff on the
+    second empty sweep leaves the jobs in state as `unverified`, the company is written
+    `status: ok` -- so the third empty sweep is `empty_suspect` *again* and asks nothing.
+    The documented "three consecutive sweeps" becomes six, and `verify_unknown` is only
+    incremented on sweeps 2, 4, 6. Expected: sweeps 2, 3, 4 verify; recorded on sweep 4."""
+    respx.get(GH_JOB).mock(return_value=httpx.Response(503))
+    bucket, store = stored()
+
+    asked, evs = [], []
+    for _ in range(4):
+        run, company = await sweep(store, bucket, ([], "ok"), stub_fetch, client)
+        asked.append(run.statuses["verify_unknown"])
+        evs.append([e["ev"] for e in run.events])
+    assert asked == [0, 1, 1, 1], asked
+    assert evs == [[], [], [], ["removed"]], evs
+    assert "1" not in company["jobs"]
+
+
+@respx.mock
+@pytest.mark.parametrize("provider", ["greenhouse", "lever"])
+async def test_a_redirect_from_the_single_posting_endpoint_is_unknown_not_gone(
+    stub_fetch, client, provider
+):
+    """`Client.get` raises `NotFound` for any 3xx (right for the list path: Personio and
+    Recruitee redirect a missing board). `posting_alive` maps every `NotFound` to `False`,
+    so a host that starts redirecting -- global -> EU, an API move -- confirms *every*
+    removal on that host as a 404 would: the product's worst defect, from the signal that
+    exists to prevent it. Only a literal 404 may be `gone`; a 3xx is `unknown`."""
+    respx.get(url__regex=r".*/(jobs|postings)/.*").mock(
+        return_value=httpx.Response(307, headers={"location": "https://example.invalid/"})
+    )
+    bucket, store = stored(provider)
+
+    run, company = await sweep(
+        store, bucket, ([job("2", title="SRE")], "ok"), stub_fetch, client, provider
+    )
+
+    assert not any(e["ev"] == "removed" for e in run.events), "a redirect is not a 404"
+    assert company["jobs"]["1"]["unverified"] == 1 and run.statuses["verify_unknown"] == 1

@@ -205,3 +205,24 @@ async def fetch(ref: Ref, client: Client, options: dict[str, Any] | None = None)
     """Every posting for one Lever board, normalized (§5.2)."""
     jobs, _meta = await list_jobs(ref, client)
     return [to_record(job, ref, options) for job in jobs]
+
+
+async def posting_alive(client: Client, ref: Ref, job_id: str) -> bool:
+    """§7.4 second signal: `GET /v0/postings/{site}/{id}` is 404 once a posting is closed
+    (verified live 2026-08-29). A board whose host is known (`region` `"eu"` or
+    `"global"`, the latter written by the snapshot after :func:`list_jobs` found it) is
+    asked once; an unknown one is probed on both hosts, so a true removal costs two GETs.
+    `True` = still served, `False` = 404 on every host asked; any other failure raises
+    `FetchError` and the caller treats it as unknown.
+    """
+    region = (ref.region or "").casefold()
+    hosts = {"eu": (EU_HOST,), "global": (GLOBAL_HOST,)}.get(region, (GLOBAL_HOST, EU_HOST))
+    for host in hosts:
+        try:
+            await client.get(f"https://{host}/v0/postings/{ref.slug}/{job_id}")
+        except NotFound as exc:
+            if exc.http_status != 404:
+                raise  # a 3xx (global -> EU move, WAF) is unknown, never a closure
+            continue
+        return True
+    return False

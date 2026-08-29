@@ -11,11 +11,20 @@ Three artefacts out of one pass over the store:
   company per day, the three most recent days. No job-level rows, no free text, no URLs,
   no ids -- the legal ruling's publishable set and nothing else, enforced by projection
   here and by ``tests/test_export_closures.py`` on the way out.
-* default -> ``{out}/archive/{day}/events.{jsonl,csv}.gz``. The PAID tier: the twelve
+* default -> ``{out}/archive/{day}/events.{jsonl,csv}.gz``. The PAID tier: the thirteen
   :data:`~core.diff.EVENT_KEYS`, partitioned by day, gzipped. Written to a local
   directory that is **not** a publishable repo, because publishing job-level rows is
   "making available to the public" under Directive 96/9/EC Art. 7(2)(b) and the whole
   free/paid line rests on not doing it.
+
+  ``verified`` (on ``removed`` rows only, else null) says which signals stand behind the
+  closure. ``true``: the feed dropped the job *and* the provider's single-posting endpoint
+  answered 404 -- Greenhouse and Lever, from 2026-08-29. ``false``: the feed dropped it
+  but that endpoint could not be asked (5xx/429/timeout, or the run's verification cap)
+  on three consecutive sweeps, so the row is up to three days late. ``null``: Ashby,
+  Recruitee, Rippling and Personio have no such endpoint, so feed membership is the only
+  signal; and every row before 2026-08-29 for any provider. A job the feed dropped while
+  the endpoint still served it is **not** a row at all -- it stays open in state.
 * default -> ``{out}/summary/closures-daily.{csv,jsonl}``. Full-depth company-day
   aggregates plus ``net``; the sample is this table, windowed and with ``net`` dropped.
   Only a run with no ``--since``/``--until`` writes that name -- a windowed run writes

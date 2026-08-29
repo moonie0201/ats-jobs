@@ -22,8 +22,8 @@
     "costCeilingUsd": {
       "title": "Cost ceiling (USD per run)",
       "type": "number",
-      "description": "Hard budget guard, per run. The run refuses to start if its estimated platform cost exceeds this, and stops early — failing, so the schedule emails you — if the running estimate reaches it. A full 385-company shard measured $0.0157; the default leaves 1.6x headroom. Raising it does not raise the monthly cap: the run also refuses to start once meta.spend shows this month past $3.25.",
-      "default": 0.025,
+      "description": "Hard budget guard, per run. The run refuses to start if its estimated platform cost exceeds this and stops early — failing, so the schedule emails you — once the running estimate reaches it; removal verification also stops mid-bucket and waits for the next sweep. A full 385-company shard with the Greenhouse /departments call measured $0.0265 by this estimate ($0.023 billed) on 2026-08-29: 1.5x headroom. The monthly cap is separate: the run refuses to start once meta.spend passes $4.90.",
+      "default": 0.04,
       "minimum": 0,
       "maximum": 5
     },
@@ -42,6 +42,14 @@
       "default": 30,
       "minimum": 5,
       "maximum": 120
+    },
+    "maxVerifyRequests": {
+      "title": "Removal verification cap (requests per run)",
+      "type": "integer",
+      "description": "Greenhouse and Lever `removed` events are confirmed against the provider's single-posting endpoint (404 = closed) before they are recorded; this caps those extra GETs per run. Candidates past the cap wait for the next sweep and are recorded `verified: false` after three consecutive unverified sweeps, so a shard capped on consecutive days records its overflow two days late. 1,000 covers a layoff day (2026-08-28: 1,120 removals over four shards); the cost ceiling and run deadline bound the clock.",
+      "default": 1000,
+      "minimum": 0,
+      "maximum": 4000
     },
     "reseedWatchlist": {
       "title": "Reseed the watchlist",

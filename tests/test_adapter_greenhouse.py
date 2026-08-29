@@ -391,3 +391,221 @@ async def test_retries_5xx_then_succeeds(client, fixture):
     )
     rows = await fetch(Ref("greenhouse", "anthropic"), client)
     assert route.call_count == 2 and len(rows) == len(payload["jobs"])
+
+
+# ------------------------------------------------------------ §7.4 second signal
+
+
+@respx.mock
+async def test_posting_alive_is_404_gone_200_live_and_raises_on_anything_else(client):
+    from core.http import FetchError
+
+    route = respx.get(f"{BOARD_URL}/4019283").mock(return_value=httpx.Response(404))
+    ref = Ref("greenhouse", "anthropic")
+    assert await greenhouse.posting_alive(client, ref, "4019283") is False
+    route.mock(return_value=httpx.Response(200, json={"id": 4019283}))
+    assert await greenhouse.posting_alive(client, ref, "4019283") is True
+    route.mock(return_value=httpx.Response(503))
+    with pytest.raises(FetchError):  # unknown is the caller's call, never "gone"
+        await greenhouse.posting_alive(client, ref, "4019283")
+
+
+# ------------------------------------------------- list-only department enrichment (§7.7)
+
+#: Captured live 2026-08-29 from `GET /boards/{slug}/departments` and trimmed to the
+#: departments that hold the board fixtures' job ids (plus their parents, so Stripe's real
+#: two-level tree survives). Job 5101378008 of `anthropic.json` had closed by then, which
+#: is the natural "listed but under no department" case.
+DEPARTMENTS_URL = "https://boards-api.greenhouse.io/v1/boards/anthropic/departments"
+LIST_ONLY = {"listOnly": True}
+
+
+def _list_only_board(payload: dict) -> dict:
+    """What the board API really returns without `content=true`: no `departments`, no
+    `offices`, no `content` (verified live 2026-08-29)."""
+    strip = ("departments", "offices", "content")
+    return {
+        **payload,
+        "jobs": [{k: v for k, v in j.items() if k not in strip} for j in payload["jobs"]],
+    }
+
+
+@respx.mock
+async def test_list_only_fetches_departments_and_matches_the_content_true_department(
+    client, fixture
+):
+    """The list-only `dept` must equal what `content=true` would have said, job for job."""
+    full = fixture("greenhouse", "anthropic.json")
+    board = respx.get(BOARD_URL).mock(return_value=httpx.Response(200, json=_list_only_board(full)))
+    depts = respx.get(DEPARTMENTS_URL).mock(
+        return_value=httpx.Response(200, json=fixture("greenhouse", "anthropic_departments.json"))
+    )
+
+    rows = await fetch(Ref("greenhouse", "anthropic"), client, options=LIST_ONLY)
+
+    assert board.call_count == 1 and depts.call_count == 1
+    assert "content" not in board.calls[0].request.url.params
+    expected = {
+        r.sourceId: r.department
+        for r in (to_record(j, Ref("greenhouse", "anthropic")) for j in full["jobs"])
+    }
+    got = {r.sourceId: r.department for r in rows}
+    assert got.pop("5101378008") is None  # closed since the capture: no department, no guess
+    expected.pop("5101378008")
+    assert got == expected
+    assert got["4461450008"] == "Sales"
+    assert all(r.warnings == [] for r in rows)
+
+
+@respx.mock
+async def test_list_only_department_is_the_leaf_of_a_nested_tree_with_org_code_stripped(
+    client, fixture
+):
+    """Stripe's tree: `"1175 Enterprise - Account Executives (NA)"` under `"GEO Sales (NA)
+    (Planning Group)"`. The leaf names the job and the org code goes (§5.1 correction 2)."""
+    full = fixture("greenhouse", "stripe_customdomain.json")
+    respx.get("https://boards-api.greenhouse.io/v1/boards/stripe/jobs").mock(
+        return_value=httpx.Response(200, json=_list_only_board(full))
+    )
+    respx.get("https://boards-api.greenhouse.io/v1/boards/stripe/departments").mock(
+        return_value=httpx.Response(200, json=fixture("greenhouse", "stripe_departments.json"))
+    )
+
+    rows = await fetch(Ref("greenhouse", "stripe"), client, options=LIST_ONLY)
+
+    by_id = {r.sourceId: r.department for r in rows}
+    assert by_id["7532733"] == "Account Executives (NA)"
+    assert by_id["8041076"] == "MaaS"
+    assert "Planning Group" not in " ".join(filter(None, by_id.values()))
+    assert by_id == {
+        r.sourceId: r.department
+        for r in (to_record(j, Ref("greenhouse", "stripe")) for j in full["jobs"])
+    }
+
+
+def _dept(id_, name, jobs, *, parent=None, children=()):
+    return {
+        "id": id_,
+        "name": name,
+        "parent_id": parent,
+        "child_ids": list(children),
+        "jobs": [{"id": j} for j in jobs],
+    }
+
+
+def test_departments_by_job_picks_the_most_specific_and_joins_siblings_deterministically():
+    """Never observed live (0 of ~5,000 jobs on five boards), so pinned synthetically: a
+    rollup parent that repeats its child's job loses to the child; two unrelated
+    departments are name-sorted and joined, whatever order Greenhouse serialises."""
+    payload = {
+        "departments": [
+            _dept(1, "Engineering", [10, 11], children=[2]),
+            _dept(2, "Platform", [10], parent=1),
+            _dept(3, "Sales", [11, 12]),
+            _dept(4, "Ops", [], children=[]),
+            {"id": 5, "name": "Broken", "jobs": None},
+            {},
+        ]
+    }
+    by_job = greenhouse.departments_by_job(httpx.Response(200, json=payload))
+    assert [d["name"] for d in by_job["10"]] == ["Platform"]
+    assert sorted(d["name"] for d in by_job["11"]) == ["Engineering", "Sales"]
+    assert [d["name"] for d in by_job["12"]] == ["Sales"]
+    assert "13" not in by_job
+
+    row = to_record({"id": 11, "departments": by_job["11"]}, Ref("greenhouse", "acme"))
+    assert row.department == "Engineering / Sales"
+    reversed_row = to_record(
+        {"id": 11, "departments": by_job["11"][::-1]}, Ref("greenhouse", "acme")
+    )
+    assert reversed_row.department == row.department
+
+
+def test_departments_payload_without_the_array_is_a_parse_error():
+    with pytest.raises(ValueError):
+        greenhouse.departments_by_job(httpx.Response(200, json={"meta": {}}))
+    with pytest.raises(ValueError):
+        greenhouse.departments_by_job(httpx.Response(200, json=[]))
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        [httpx.Response(404, json={"error": "not found"})],
+        [httpx.Response(503)],
+        [httpx.Response(429, headers={"Retry-After": "60"})],
+        [httpx.Response(200, text="<html>nope</html>")] * 2,
+        [httpx.Response(200, json={"meta": {}})] * 2,
+    ],
+    ids=["404", "5xx", "429-retry-after-60", "malformed", "no-departments-array"],
+)
+@respx.mock
+async def test_departments_failure_degrades_to_null_with_a_warning_never_fails_the_board(
+    client, fixture, responses
+):
+    """§7.4: a lost board day is the product's worst defect, a missing department its
+    second worst. The board stands, every row is dept=null and says why -- after **one**
+    ask: a 429 whose `Retry-After: 60` the §5.12 table honoured three times would outlast
+    the snapshot's 120 s company budget and turn the list result it already holds into a
+    timeout, i.e. the lost board day this call exists not to cause."""
+    full = fixture("greenhouse", "anthropic.json")
+    respx.get(BOARD_URL).mock(return_value=httpx.Response(200, json=_list_only_board(full)))
+    depts = respx.get(DEPARTMENTS_URL).mock(side_effect=responses)
+
+    rows = await fetch(Ref("greenhouse", "anthropic"), client, options=LIST_ONLY)
+
+    assert depts.call_count == len(responses)  # no hard retry; only the soft body retry
+    assert len(rows) == len(full["jobs"])
+    assert all(r.department is None for r in rows)
+    assert all(r.warnings == [greenhouse.DEPARTMENTS_WARNING] for r in rows)
+    assert rows[0].title == full["jobs"][0]["title"]
+
+
+@respx.mock
+async def test_empty_board_skips_the_departments_call(client):
+    respx.get(BOARD_URL).mock(return_value=httpx.Response(200, json={"jobs": [], "meta": {}}))
+    depts = respx.get(DEPARTMENTS_URL).mock(
+        return_value=httpx.Response(200, json={"departments": []})
+    )
+    assert await fetch(Ref("greenhouse", "anthropic"), client, options=LIST_ONLY) == []
+    assert depts.call_count == 0
+
+
+@respx.mock
+async def test_content_true_path_never_calls_departments(client, fixture):
+    respx.get(BOARD_URL).mock(
+        return_value=httpx.Response(200, json=fixture("greenhouse", "anthropic.json"))
+    )
+    depts = respx.get(DEPARTMENTS_URL).mock(
+        return_value=httpx.Response(200, json={"departments": []})
+    )
+    await fetch(Ref("greenhouse", "anthropic"), client, options=OPTIONS)
+    assert depts.call_count == 0
+
+
+@respx.mock
+async def test_departments_call_goes_through_the_same_host_bucket(fixture):
+    """Both requests hit `boards-api.greenhouse.io`, so the second waits on the same
+    2 rps token bucket `core.http` keeps per host: the extra request is paid in politeness,
+    not in a parallel burst."""
+    sleeps: list[float] = []
+    clock = [0.0]
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        clock[0] += delay
+
+    client = make_client(timeout_secs=5, sleep=fake_sleep, clock=lambda: clock[0])
+    full = fixture("greenhouse", "anthropic.json")
+    respx.get(BOARD_URL).mock(return_value=httpx.Response(200, json=_list_only_board(full)))
+    respx.get(DEPARTMENTS_URL).mock(
+        return_value=httpx.Response(200, json=fixture("greenhouse", "anthropic_departments.json"))
+    )
+
+    await fetch(Ref("greenhouse", "anthropic"), client, options=LIST_ONLY)
+
+    bucket = client._buckets["boards-api.greenhouse.io"]
+    assert len(client._buckets) == 1
+    # Burst capacity is 2 at 2 rps, so both requests spent a token and neither slept; a
+    # third would have. The clock is frozen, so no refill hides the spend.
+    assert bucket._tokens == 0.0 and sleeps == []

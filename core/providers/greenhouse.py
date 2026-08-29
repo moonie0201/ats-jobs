@@ -10,14 +10,20 @@ here. Everything downstream of the field mapping (location, remote, employment, 
 dates, redaction, identity) belongs to :func:`core.normalize.record.build_job_record`; this
 module only decides *which Greenhouse key* feeds *which unified field*.
 
+The list-only path (§7.7, the history snapshot) is **two** requests per board: without
+`content=true` Greenhouse silently drops `departments` and `offices` from every job, so
+`GET /boards/{slug}/departments` is fetched as well and the department comes from there —
+see :data:`DEPARTMENTS_WARNING`.
+
 The three v1 corrections of §5.1 are enforced here, each on measured data:
 
 1. `url` and `applyUrl` are both `absolute_url` verbatim — no `#app` anchor exists in the
    payload, and the host is usually the customer's own domain (stripe 25/25 `stripe.com`
    in the committed fixture).
-2. `team` is always null and `departments[0].name` is stripped of its leading org code
+2. `team` is always null and each `departments[].name` is stripped of its leading org code
    (`"1653 Startups - Account Executives (NA)"` -> `"Account Executives (NA)"`); every job
-   on every sampled board has exactly one department.
+   on every sampled board has exactly one department, and the never-observed multi-
+   department job would show them name-sorted and joined with `" / "`.
 3. `offices[].name` never reaches `locations[]` — those objects are org rollup buckets
    (`{"name": "US", "location": null}`), and "Japan Locations" is not a place. Only the
    non-null `offices[].location` strings are used.
@@ -25,20 +31,33 @@ The three v1 corrections of §5.1 are enforced here, each on measured data:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 import httpx
 
-from core.http import MAX_RESPONSE_BYTES
+from core.http import MAX_RESPONSE_BYTES, FetchError, NotFound
 from core.models import JobRecord, ProviderSpec, Ref
 from core.normalize.dates import pick_date
 from core.normalize.html import unescape_once
 from core.normalize.record import build_job_record
 
+logger = logging.getLogger(__name__)
+
 SPEC = ProviderSpec(name="greenhouse", host_rate_limit=2.0, needs_detail_call=False)
 
 API_BASE = "https://boards-api.greenhouse.io/v1/boards"
+
+#: §7.7 list-only: the board API drops `departments` and `offices` from every job unless
+#: `content=true` is sent — silently, no error (verified live 2026-08-29; another scraper
+#: hit the same wall, tonyperkins/seeker-os#35). `content=true` is what the snapshot
+#: cannot afford (Stripe 4.48 MB), and `GET /boards/{slug}/departments` lists the same job
+#: ids grouped by department at about the list-only size (Stripe 469 KB, Anduril 2.5 MB
+#: raw / 150 KB gzipped). So list-only is one extra request per board, through the same
+#: per-host bucket. If that call fails the board still stands: every row is dept=null and
+#: carries this warning, the way :data:`SIZE_WARNING` marks a dropped description.
+DEPARTMENTS_WARNING = "department_omitted_fetch"
 
 #: §5.1: `content=true` on a 5,000-job board can exceed 30 MB. Past this the board is
 #: re-requested without the descriptions and every row carries :data:`SIZE_WARNING`.
@@ -86,6 +105,32 @@ def _board(response: httpx.Response) -> list[dict[str, Any]]:
     return [job for job in jobs if isinstance(job, dict)]
 
 
+def departments_by_job(response: httpx.Response) -> dict[str, list[dict[str, Any]]]:
+    """Decode one `/departments` response into job id -> its most specific departments.
+
+    Measured on five live boards (Anduril 1,361 departments, Stripe 1,013, Anthropic 23):
+    every job sits under exactly one department and a parent never repeats its children's
+    jobs — but the API documents a tree, so a rollup is handled: a department is dropped
+    when one of its `child_ids` also lists the job, and whatever survives is returned for
+    :func:`to_record` to name-sort and join. A payload without a `departments[]` array is
+    `parse_error` (§5.12), like a board without `jobs[]`.
+    """
+    payload = response.json()
+    departments = payload.get("departments") if isinstance(payload, dict) else None
+    if not isinstance(departments, list):
+        raise ValueError("Greenhouse departments payload carries no departments[] array")
+    holders: dict[str, list[dict[str, Any]]] = {}
+    for dept in _dicts(departments):
+        for job in _dicts(dept.get("jobs")):
+            if job.get("id") is not None:
+                holders.setdefault(str(job["id"]), []).append(dept)
+    by_job: dict[str, list[dict[str, Any]]] = {}
+    for jid, depts in holders.items():
+        ids = {d.get("id") for d in depts}
+        by_job[jid] = [d for d in depts if not ids.intersection(d.get("child_ids") or [])]
+    return by_job
+
+
 async def fetch(ref: Ref, client: Any, *, options: dict[str, Any] | None = None) -> list[JobRecord]:
     """Every job on one Greenhouse board (§5.1). Failures raise `core.http.FetchError`.
 
@@ -94,6 +139,7 @@ async def fetch(ref: Ref, client: Any, *, options: dict[str, Any] | None = None)
     """
     url = f"{API_BASE}/{ref.slug}/jobs"
     oversize = False
+    warnings: list[str] = []
     # §7.7: the history snapshot fetches metadata only, and `content=true` is what makes
     # a Stripe-sized board 4.48 MB on the wire. Same switch Rippling reads to skip its
     # detail call (§7.3), so "list-only" is one word across every adapter.
@@ -102,7 +148,26 @@ async def fetch(ref: Ref, client: Any, *, options: dict[str, Any] | None = None)
     )
     if list_only:
         jobs = await client.get_json(url, params={"pay_transparency": "true"}, parse=_board)
-        return [to_record(job, ref, options) for job in jobs]
+        by_job: dict[str, list[dict[str, Any]]] = {}
+        if jobs:  # an empty board has nothing to name; save the request
+            try:
+                # `retries=0`: a 429 with `Retry-After: 60` honoured three times over would
+                # outlast the snapshot's 120 s company budget and discard the list result
+                # that already succeeded -- the lost board-day this call must never cause.
+                by_job = await client.get_json(
+                    f"{API_BASE}/{ref.slug}/departments", parse=departments_by_job, retries=0
+                )
+            except FetchError as exc:
+                # Degrade, never fail: a department is the product's second-worst gap, a
+                # lost board day its worst. `core.diff` treats a null on either side of
+                # `dept` as this gap rather than as a `changed` event, and keeps the
+                # department it already knows.
+                logger.warning("greenhouse %s: departments unavailable: %s", ref.slug, exc)
+                warnings.append(DEPARTMENTS_WARNING)
+        for job in jobs:
+            # `setdefault`: should Greenhouse ever ship `departments` list-only, it wins.
+            job.setdefault("departments", by_job.get(str(job.get("id")), []))
+        return [to_record(job, ref, options, warnings=warnings) for job in jobs]
 
     def parse(response: httpx.Response) -> list[dict[str, Any]]:
         nonlocal oversize
@@ -117,7 +182,6 @@ async def fetch(ref: Ref, client: Any, *, options: dict[str, Any] | None = None)
         url, params={"content": "true", "pay_transparency": "true"}, parse=parse
     )
 
-    warnings: list[str] = []
     if oversize:
         warnings.append(SIZE_WARNING)
         jobs = await client.get_json(url, params={"pay_transparency": "true"}, parse=_board)
@@ -155,7 +219,12 @@ def to_record(
         "sourceId": job.get("id"),
         "title": job.get("title"),
         "company": job.get("company_name"),
-        "department": normalize_department(departments[0].get("name") if departments else None),
+        # §5.1 correction 2: one department on every live job; several (only ever from a
+        # `/departments` rollup) are name-sorted so the value cannot flip `changeHash`.
+        "department": " / ".join(
+            sorted({n for d in departments if (n := normalize_department(d.get("name")))})
+        )
+        or None,
         "team": None,  # §5.1 correction 2: `departments[1]` exists on no live job.
         "locationRaw": location.get("name"),
         # §5.1 correction 3: office *names* are org buckets, not places.
@@ -170,3 +239,18 @@ def to_record(
         "warnings": list(warnings or []),
     }
     return build_job_record(ref, extracted, options)
+
+
+async def posting_alive(client: Any, ref: Ref, job_id: str) -> bool:
+    """§7.4 second signal: `GET /boards/{slug}/jobs/{id}` is 404 once a posting is closed
+    (verified live 2026-08-29). `True` = still served, `False` = 404. Anything else --
+    5xx after the §5.12 retries, 429, timeout -- raises `FetchError`: the caller treats it
+    as *unknown*, never as gone.
+    """
+    try:
+        await client.get(f"{API_BASE}/{ref.slug}/jobs/{job_id}")
+    except NotFound as exc:
+        if exc.http_status != 404:
+            raise  # `Client.get` files a 3xx as NotFound for the list path; here it is unknown
+        return False
+    return True

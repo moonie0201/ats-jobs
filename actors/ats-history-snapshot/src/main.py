@@ -6,16 +6,20 @@ One shard of the watchlist per run, four staggered runs a day (§7.2). Per run:
     -> core.diff (§7.4) -> state/{bucket} + events/{date}/{shard} -> counts + meta
 
 This Actor sells nothing and pushes no dataset rows. Everything it costs is platform
-cost, so the only budget that matters is the *platform* one. A full shard measured
-$0.0157, and :class:`Budget` aborts before a bug can spend more than `costCeilingUsd`
-(default $0.025) of it. A per-run ceiling is not a monthly budget, though --- 4 runs/day
-at the old $0.05 was $6.09/month against a $5.00 credit --- so the run also refuses to
-start once `meta.spend` says this month is already past :data:`MONTHLY_BUDGET_USD`.
+cost, so the only budget that matters is the *platform* one. A full 385-company shard
+with the `/departments` call measured 784 s and $0.0265 by :class:`Budget`'s estimate
+($0.0230 platform-billed) on 2026-08-29, and :class:`Budget` aborts before a bug can
+spend more than `costCeilingUsd` (default $0.04) of it. A per-run ceiling is not a
+monthly budget, though --- 4 runs/day at the old $0.05 was $6.09/month against a $5.00
+credit --- so the run also refuses to start once `meta.spend` says this month is already
+past :data:`MONTHLY_BUDGET_USD`.
 
-Two rules the runner exists to enforce, both from §7.4's safety table — a network blip
+Three rules the runner exists to enforce, all from §7.4's safety table — a network blip
 must never look like a mass layoff, and a lost day is lost forever:
 
 * a failed fetch keeps the previous state untouched and emits **no** events;
+* a `removed` for a Greenhouse or Lever job is checked against the provider's
+  single-posting endpoint before it is recorded (:func:`verify_removals`);
 * every bucket is checkpointed the moment it is diffed, so a 90-minute timeout costs the
   buckets not yet reached and nothing else.
 """
@@ -32,7 +36,7 @@ from typing import Any
 
 from apify import Actor, Event
 
-from core.diff import diff
+from core.diff import VERIFIABLE, diff
 from core.directory import load_directory
 from core.history import (
     BUCKETS,
@@ -51,9 +55,10 @@ DEFAULTS: dict[str, Any] = {
     "shard": 0,
     "shardCount": 4,
     "maxCompanies": 0,  # 0 = the whole shard
-    "costCeilingUsd": 0.025,
+    "costCeilingUsd": 0.04,
     "maxConcurrency": 8,
     "requestTimeoutSecs": 30,
+    "maxVerifyRequests": 1000,
     "reseedWatchlist": False,
     "force": False,
     "purgeProvider": "",
@@ -67,6 +72,7 @@ NUMERIC_BOUNDS: dict[str, tuple[float, float]] = {
     "costCeilingUsd": (0.0, 5.0),
     "maxConcurrency": (1, 16),
     "requestTimeoutSecs": (5, 120),
+    "maxVerifyRequests": (0, 4000),
 }
 
 #: §7.6 — seeded with every directory company validated `ok` with `job_count > 0`.
@@ -80,6 +86,50 @@ DEGRADED_MIN_COMPANIES = 5
 #: §7.4: two consecutive empty runs before removals fire.
 EMPTY_SUSPECT = "empty_suspect"
 STALE_AFTER_FAILURES = 7
+
+#: §7.4, second signal for `removed` (:func:`verify_removals`). Feed membership alone has
+#: produced false removals -- a paging glitch or a transient half-empty page drops a job
+#: that is still open -- and a false "removed" is the closure product's worst defect. For
+#: the two providers whose single-posting endpoint answers 404 once a posting is closed
+#: (`core.diff.VERIFIABLE`: Greenhouse `/boards/{slug}/jobs/{id}`, Lever
+#: `/v0/postings/{site}/{id}`, both verified live 2026-08-29) every `removed` candidate
+#: costs one extra GET and lands in one of four branches:
+#:
+#: | Endpoint answer                    | Rule                                              |
+#: |------------------------------------|---------------------------------------------------|
+#: | 404                                | confirmed: record it with `verified: true`        |
+#: | 200                                | still open, the feed omitted it: **no** event, the |
+#: |                                    | job stays in state with `omitted += 1` and is     |
+#: |                                    | re-checked by the next sweep                      |
+#: | 5xx / 429 / timeout / cap hit      | unknown: no event, job stays with                  |
+#: |                                    | `unverified += 1`; after                          |
+#: |                                    | :data:`UNVERIFIED_REMOVAL_AFTER` consecutive       |
+#: |                                    | unknowns record it with `verified: false`         |
+#: | Ashby / Recruitee / Rippling /     | no endpoint: recorded as before with              |
+#: | Personio                           | `verified: null` -- the feed is the only signal   |
+#:
+#: Either counter disappears the moment the feed lists the job again. The `omitted`
+#: branch never emits: a Lever posting can be *unlisted* (hidden from the feed, served by
+#: URL) indefinitely, and that is not a fill. ponytail: such a job costs one verify
+#: request per sweep for as long as it stays hidden; cap it per job if a board ever
+#: accumulates them.
+#:
+#: Three, because a company is swept once a day, so this is three *days* of the feed
+#: saying gone while the endpoint could not be asked -- each ask already carrying the
+#: §5.12 retries -- which is past any blip and bounds the lag on `days_open`, the flagship
+#: metric, at three days. Two would let a single over-cap day plus one 5xx make the call.
+#: A board that went *empty* stays `empty_suspect` while its jobs are still in state, so
+#: every empty sweep after the first diffs and asks again: three sweeps means three sweeps
+#: for the headline case too (an ATS migration), not six.
+UNVERIFIED_REMOVAL_AFTER = 3
+
+#: `maxVerifyRequests` sizing. The first steady-state day (2026-08-28) removed 876
+#: Greenhouse and 244 Lever jobs -- 1,120 candidates over four shards, 280 each -- and a
+#: layoff day doubles that. 200 left the highest-numbered buckets of every shard
+#: permanently past the cap, two days late, `verified: false`. The time bound is not the
+#: cap but :func:`posting_alive`'s ceiling/deadline check: a doubled day (560 asks at
+#: Greenhouse's 2 rps, 280 s) fits inside both on top of the 784 s measured sweep; the
+#: full cap does not, and past the deadline the rest waits for the next sweep.
 
 #: §8.6 — no single company may hold the shard hostage.
 COMPANY_BUDGET_SECS = 120.0
@@ -98,10 +148,11 @@ CONTAINER_FLOOR_SECS = 34.0
 #: §7.7/§7.8: the whole Actor's share of the $5/month credit. The per-run ceiling cannot
 #: bound this on its own — nothing in a single run knows how many siblings ran today — so
 #: the month-to-date total is carried in `meta.spend` and checked before the sweep starts.
-#: Sized to bound 122 runs at :data:`DEFAULTS`'s ceiling (4 x 30.44 x $0.025 = $3.04);
-#: the *projected* monthly total is $1.76 (4 sweeps/day x 30.44 x $0.0157), so this is a
-#: runaway guard, not a quota. Actual spend to date is carried in `meta.spend`.
-MONTHLY_BUDGET_USD = 3.25
+#: Sized to bound 122 runs at :data:`DEFAULTS`'s ceiling (4 x 30.44 x $0.04 = $4.87)
+#: under the $5.00 credit; the *projected* total is ~$3.3 (4 sweeps/day x 30.44 x the
+#: $0.0265 estimate a full shard measured on 2026-08-29, ~$2.8 platform-billed), so this
+#: is a runaway guard, not a quota. Actual spend is in `meta.spend`.
+MONTHLY_BUDGET_USD = 4.9
 
 #: §7.7 verified platform prices (R5 §2).
 PRICE_CU_USD = 0.20  # 1 CU = 1 GB-hour of compute
@@ -114,14 +165,23 @@ PRICE_TRANSFER_USD_PER_GB = 0.20
 #: measured. ponytail: upgrade to a real byte counter in `Client` if transfer ever
 #: becomes the line that trips the ceiling.
 BYTES_PER_JOB = 1024
+#: The requests the list feed does not account for: one `/jobs/{id}` per removal candidate
+#: (4.7 KB measured) and one `/departments` per Greenhouse board (30 KB gzipped for
+#: Anthropic; Stripe's 469 KB is the outlier), both counted so they reach the ceiling and
+#: `meta.spend` rather than riding for free.
+BYTES_PER_VERIFY = 5 * 1024
+BYTES_PER_DEPARTMENTS = 30 * 1024
 
 #: Pre-flight sizing. **Measured, not modelled**: a live shard-0 sweep took 348.7 s for
 #: 275 companies at `maxConcurrency: 8` and 512 MB — 1.27 s/company, 2.5x the 0.5 s the
 #: §7.7 simulation predicted, because the per-host token bucket serialises each provider
 #: and four adapters still ship full descriptions. The old value made the preflight pass a
 #: shard the ceiling then stopped 5 buckets short, which is exactly the silent partial day
-#: §7 exists to prevent. `JOBS_PER_COMPANY` was confirmed by the same run (12,151/275=44).
-SECS_PER_COMPANY = 1.3
+#: §7 exists to prevent. Re-measured 2026-08-29 (run gydyIo2aYH8j5mWUe): 784 s for 385
+#: companies *with* the Greenhouse `/departments` call and 4 verifies = 1.95 s/company;
+#: 2.3 leaves room for a normal night's ~220 verifies at 1-2 rps on top. `JOBS_PER_COMPANY`
+#: was confirmed by the 2026-08-26 run (12,151/275=44).
+SECS_PER_COMPANY = 2.3
 JOBS_PER_COMPANY = 50
 
 
@@ -164,16 +224,21 @@ class Budget:
     kv_reads: int = 0
     kv_writes: int = 0
     jobs_fetched: int = 0
+    extra_bytes: int = 0
     tripped: bool = False
 
     def cost(self, *, elapsed: float | None = None) -> float:
         hours = (time.monotonic() - self.started if elapsed is None else elapsed) / 3600
+        transfer = self.jobs_fetched * BYTES_PER_JOB + self.extra_bytes
         return (
             self.memory_gb * hours * PRICE_CU_USD
             + self.kv_writes * PRICE_KV_WRITE_USD
             + self.kv_reads * PRICE_KV_READ_USD
-            + self.jobs_fetched * BYTES_PER_JOB / 1e9 * PRICE_TRANSFER_USD_PER_GB
+            + transfer / 1e9 * PRICE_TRANSFER_USD_PER_GB
         )
+
+    def overdue(self) -> bool:
+        return time.monotonic() - self.started > RUN_DEADLINE_SECS
 
     def estimate(self, companies: int, shard_count: int) -> float:
         """Pre-flight: what this shard costs if it runs to the end. `shard_count` divides
@@ -347,8 +412,97 @@ async def fetch_company(
     except Exception as exc:  # one bad company never ends the shard (§13.4 #14)
         Actor.log.warning("fetch failed", extra={"company": watch_key(entry), "error": repr(exc)})
         return None, "parse_error"
+    if provider == "lever" and records:
+        # `list_jobs` found the board on one host (`ref.region` = "eu" or None); the other
+        # host never has its postings. The watchlist row does not carry it, so without
+        # this :func:`verify_removals` probes both hosts and a true removal costs two GETs.
+        entry["region"] = ref.region or "global"
     rows = [row for row in (job_row(r) for r in records) if row]
     return rows, "ok"
+
+
+async def posting_alive(entry: dict[str, Any], job_id: str, client: Any, run: Run) -> str:
+    """One second-signal request -> `"gone"` (404), `"live"` (200) or `"unknown"`.
+
+    The loop in :func:`verify_removals` is sequential and the ceiling/deadline are
+    otherwise checked only between buckets, so a run that is already over either stops
+    asking here: a capped candidate waits for the next sweep, nothing is lost.
+    """
+    cap = run.cfg["maxVerifyRequests"]
+    if run.verify_used >= cap or run.budget.over() or run.budget.overdue():
+        if not run.statuses["verify_capped"]:
+            Actor.log.warning(
+                "verification cap hit; remaining removals wait for the next sweep",
+                extra={
+                    "maxVerifyRequests": cap,
+                    "used": run.verify_used,
+                    "budgetOver": run.budget.tripped,
+                    "overdue": run.budget.overdue(),
+                },
+            )
+        run.statuses["verify_capped"] += 1
+        return "unknown"
+    run.verify_used += 1
+    run.budget.extra_bytes += BYTES_PER_VERIFY
+    provider = str(entry["provider"])
+    ref = Ref(
+        provider=provider,
+        slug=str(entry["company"]),
+        site=entry.get("site") or None,
+        region=entry.get("region") or None,
+    )
+    try:
+        # One request's worth of time, not the company budget: a 429 whose `Retry-After`
+        # the §5.12 table honours three times over would cost 120 s *per candidate*, in
+        # series, and 40 of them would run one bucket past the Actor's timeout.
+        alive = await asyncio.wait_for(
+            get_adapter(provider).posting_alive(client, ref, job_id),
+            timeout=run.cfg["requestTimeoutSecs"],
+        )
+    except Exception as exc:  # FetchError, TimeoutError, anything: unknown, never gone
+        Actor.log.warning(
+            "verification failed", extra={"company": watch_key(entry), "error": repr(exc)}
+        )
+        run.statuses["verify_unknown"] += 1
+        return "unknown"
+    run.statuses["verify_live" if alive else "verify_gone"] += 1
+    return "live" if alive else "gone"
+
+
+async def verify_removals(
+    entry: dict[str, Any],
+    prev: dict[str, dict[str, Any]],
+    nxt: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+    client: Any,
+    run: Run,
+) -> None:
+    """§7.4 second signal, applied in place to one company's `diff()` output -- see the
+    table at :data:`UNVERIFIED_REMOVAL_AFTER`. `diff` stays pure; this is the IO."""
+    if str(entry["provider"]) not in VERIFIABLE:
+        return  # feed membership is the only signal; `verified` stays None
+    kept: list[dict[str, Any]] = []
+    for event in events:
+        if event["ev"] != "removed":
+            kept.append(event)
+            continue
+        jid = event["job_id"]
+        old = prev[jid]
+        verdict = await posting_alive(entry, jid, client, run)
+        if verdict == "gone":
+            event["verified"] = True
+            kept.append(event)
+        elif verdict == "live":
+            nxt[jid] = {k: v for k, v in old.items() if k != "unverified"}
+            nxt[jid]["omitted"] = int(old.get("omitted") or 0) + 1
+        else:
+            unverified = int(old.get("unverified") or 0) + 1
+            if unverified >= UNVERIFIED_REMOVAL_AFTER:
+                event["verified"] = False
+                kept.append(event)
+            else:
+                nxt[jid] = {**old, "unverified": unverified}
+    events[:] = kept
 
 
 # -------------------------------------------------------------------- run context
@@ -368,6 +522,7 @@ class Run:
     events_written: int = 0
     events_resumed: int = 0
     companies_done: int = 0
+    verify_used: int = 0
     buckets_done: int = 0
     buckets_skipped: int = 0
     stopped: str | None = None
@@ -451,8 +606,18 @@ async def process_bucket(bucket: int, entries: list[dict], client: Any, run: Run
             continue
 
         nxt, events = diff(prev_jobs, jobs, run.today, provider, str(entry["company"]))
+        await verify_removals(entry, prev_jobs, nxt, events, client, run)
+        if provider == "greenhouse" and jobs:
+            run.budget.extra_bytes += BYTES_PER_DEPARTMENTS
+            # `/departments` health, in the summary line: the department is the product's
+            # second-worst gap and the call degrades silently to null.
+            run.statuses["gh_jobs"] += len(jobs)
+            run.statuses["gh_dept"] += sum(1 for j in jobs if j.get("dept"))
         companies[key] = {
-            "status": "ok",
+            # An empty feed whose removals came back unknown or live leaves jobs in `nxt`;
+            # written `ok`, the next empty sweep would re-arm the two-consecutive-empty
+            # rule and ask nothing, so the endpoint was only asked every other sweep.
+            "status": EMPTY_SUSPECT if not jobs and nxt else "ok",
             "consecutive_failures": 0,
             "tracked_since": prev.get("tracked_since") or run.today,
             "jobs": nxt,
@@ -630,7 +795,7 @@ async def main() -> None:
             max_connections=cfg["maxConcurrency"],
         ) as client:
             for bucket in sorted(by_bucket):
-                overdue = time.monotonic() - budget.started > RUN_DEADLINE_SECS
+                overdue = budget.overdue()
                 if budget.over() or overdue:
                     run.stopped = (
                         "run_deadline" if overdue and not budget.tripped else ("budget_ceiling")
@@ -670,6 +835,9 @@ async def main() -> None:
             f"companies={run.companies_done} ok={run.statuses['ok']} failed={failed} "
             f"events={len(run.events)} (+{added}/-{removed}/~{changed}) "
             f"open={sum(c['open'] for c in run.counts)} "
+            f"dept={run.statuses['gh_dept']}/{run.statuses['gh_jobs']}gh "
+            f"verify={run.statuses['verify_gone']}gone/{run.statuses['verify_live']}live/"
+            f"{run.statuses['verify_unknown']}unknown/{run.statuses['verify_capped']}capped "
             f"kv={store.writes}w/{store.reads}r bytes={store.bytes_written} "
             f"cost~${budget.cost():.5f} stopped={run.stopped or '-'}"
         )

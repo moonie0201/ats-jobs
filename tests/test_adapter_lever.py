@@ -414,3 +414,40 @@ def test_registry_resolves_the_adapter():
     module = get_adapter("lever")
     assert module.fetch is fetch
     assert module.SPEC is SPEC
+
+
+# ------------------------------------------------------------ §7.4 second signal
+
+
+@respx.mock
+async def test_posting_alive_probes_global_then_eu_and_confirms_only_on_two_404s(client):
+    from core.providers.lever import posting_alive
+
+    glob = respx.get("https://api.lever.co/v0/postings/acme/j1").mock(
+        return_value=httpx.Response(404)
+    )
+    eu = respx.get("https://api.eu.lever.co/v0/postings/acme/j1").mock(
+        return_value=httpx.Response(200, json={"id": "j1"})
+    )
+    assert await posting_alive(client, Ref("lever", "acme"), "j1") is True, "EU still serves it"
+    assert glob.call_count == 1 and eu.call_count == 1
+
+    eu.mock(return_value=httpx.Response(404))
+    assert await posting_alive(client, Ref("lever", "acme"), "j1") is False
+
+
+@respx.mock
+async def test_posting_alive_asks_a_known_eu_board_once(client):
+    from core.providers.lever import posting_alive
+
+    glob = respx.get("https://api.lever.co/v0/postings/acme/j1").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://api.eu.lever.co/v0/postings/acme/j1").mock(
+        return_value=httpx.Response(200, json={"id": "j1"})
+    )
+    assert await posting_alive(client, Ref("lever", "acme", region="eu"), "j1") is True
+    assert glob.call_count == 0
+
+    assert await posting_alive(client, Ref("lever", "acme", region="global"), "j1") is False
+    assert glob.call_count == 1, "a known-global board never asks the EU host"

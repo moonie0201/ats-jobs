@@ -27,7 +27,15 @@ EVENT_KEYS = (
     "posted",
     "days_open",
     "changed",
+    "verified",
 )
+
+#: Providers whose single-posting endpoint answers 404 once a posting is closed, giving a
+#: `removed` a second signal independent of feed membership (§7.4). Ashby's
+#: `posting-api/job-board/{org}/{id}` is 401 and its public page is a client-rendered
+#: 200 for any uuid; Recruitee, Rippling and Personio expose nothing usable either, so for
+#: those four the feed is the only signal and `verified` stays `None`.
+VERIFIABLE = frozenset({"greenhouse", "lever"})
 
 #: The fields a `changed` event reports on, and the fields the state hash covers.
 CHANGE_FIELDS = ("t", "loc", "dept", "remote")
@@ -69,8 +77,15 @@ def _event(
     *,
     days_open: int | None = None,
     changed: list[str] | None = None,
+    verified: bool | None = None,
 ) -> dict[str, Any]:
-    """Build an event from the documented key set only. Never splat state records."""
+    """Build an event from the documented key set only. Never splat state records.
+
+    `verified` is meaningful on `removed` only. `diff` is pure and always emits `None`; the
+    snapshot runner asks the provider's single-posting endpoint and rewrites it to `True`
+    (404: confirmed closed), `False` (feed says gone, endpoint unreachable for
+    `UNVERIFIED_REMOVAL_AFTER` sweeps) or leaves `None` for providers with no endpoint.
+    """
     return {
         "d": today,
         "provider": provider,
@@ -84,6 +99,7 @@ def _event(
         "posted": rec.get("posted"),
         "days_open": days_open,
         "changed": changed,
+        "verified": verified,
     }
 
 
@@ -113,8 +129,13 @@ def diff(
     nxt: dict[str, dict[str, Any]] = {}
     cur_by_id = {str(j["id"]): j for j in cur}
     for jid, j in cur_by_id.items():
-        h = hasher(j)
         old = prev.get(jid)
+        if old and j.get("dept") is None and old.get("dept"):
+            # A null `dept` is *our* gap, never the employer's edit (§5.1): a failed
+            # `/departments` call must not erase a department the state already knows, or
+            # the `removed` a later day builds from `old` ships without it.
+            j = {**j, "dept": old["dept"]}
+        h = hasher(j)
         rec = {
             **{k: j.get(k) for k in STATE_FIELDS},
             "h": h,
@@ -130,7 +151,17 @@ def diff(
         if old is None:
             events.append(_event("added", jid, rec, today, provider, company))
         elif old.get("h") != h and (
-            changed := [k for k in CHANGE_FIELDS if canon(old.get(k)) != canon(rec.get(k))]
+            changed := [
+                k
+                for k in CHANGE_FIELDS
+                if canon(old.get(k)) != canon(rec.get(k))
+                # `dept` null on either side is *our* gap, not the employer's edit: it was
+                # null on every Greenhouse row until the list-only `/departments` call
+                # existed (§5.1). The backfill must not emit `changed: ["dept"]` for a
+                # whole board; a known department is carried forward above, so an outage
+                # leaves the state and `h` untouched and the next real edit diffs cleanly.
+                and (k != "dept" or (canon(old.get(k)) and canon(rec.get(k))))
+            ]
         ):
             # A hash-scheme change (a field added to CHANGE_FIELDS) rehashes every stored
             # job at once. Without the walrus guard that emits `changed: []` for all of
@@ -154,9 +185,25 @@ def diff(
     # would make `median_days_open_of_removed` — the flagship history metric — count every
     # repost as a hire, so the fill signal is withheld when the same canonical job
     # (title, location, department, remote) is still open under a different id (H1 M6).
-    reposted = {nxt[e["job_id"]]["h"] for e in events if e["ev"] == "added"}
-    if reposted:
+    # Not a hash comparison: `h` covers `dept`, which is null on every Greenhouse record
+    # stored before the `/departments` call existed and on any day that call fails, so a
+    # repost across such a day hashed differently on each side and was billed as a fill.
+    added = [nxt[e["job_id"]] for e in events if e["ev"] == "added"]
+    if added:
+        # ponytail: O(added x removed) per company; index by (t, loc, remote) if a board
+        # ever churns thousands of jobs in one day.
         for event in events:
-            if event["ev"] == "removed" and prev[event["job_id"]].get("h") in reposted:
+            if event["ev"] == "removed" and any(
+                _same_job(prev[event["job_id"]], new) for new in added
+            ):
                 event["days_open"] = None
     return nxt, events
+
+
+def _same_job(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """§7.5 canonical identity; `dept` counts only when both sides know it."""
+    return all(
+        canon(a.get(k)) == canon(b.get(k))
+        for k in CHANGE_FIELDS
+        if k != "dept" or (canon(a.get(k)) and canon(b.get(k)))
+    )

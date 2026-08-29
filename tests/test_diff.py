@@ -6,6 +6,8 @@ the malformed-state case gets its own test.
 
 from __future__ import annotations
 
+import pytest
+
 from core.diff import EVENT_KEYS, canon, diff, jhash
 
 TODAY = "2026-08-26"
@@ -206,3 +208,48 @@ def test_a_hash_scheme_change_alone_emits_no_event():
     _, events = diff(prev, [{"id": "1", **job}], "2026-08-26", "greenhouse", "acme")
 
     assert events == []
+
+
+def test_diff_never_decides_verified_itself():
+    """`verified` is the runner's second signal (IO); the pure diff leaves it null."""
+    _, events = diff(stored(fetched()), [], "2026-08-27", PROVIDER, COMPANY)
+    assert [(e["ev"], e["verified"]) for e in events] == [("removed", None)]
+
+
+@pytest.mark.parametrize(("before", "after"), [(None, "Sales"), ("Sales", None), ("", "Sales")])
+def test_a_department_appearing_or_vanishing_is_a_data_gap_not_a_change(before, after):
+    """Greenhouse `dept` was null on every list-only row until the `/departments` call
+    existed, and that call can still fail for a day (§5.1). Neither the backfill nor the
+    outage may emit `changed: ["dept"]` for a whole board. The backfill moves the stored
+    record and its hash to the name; an outage null never overwrites a name already in
+    state (a later `removed` is built from it), so the state ends on "Sales" either way
+    and the next real edit still diffs cleanly."""
+    old = {"t": "Backend Engineer", "loc": "Berlin", "dept": before, "remote": False}
+    prev = {"1": {**old, "h": jhash(old), "posted": "2026-08-01", "first_seen": "2026-08-01"}}
+
+    state, events = diff(
+        prev, [{"id": "1", **old, "dept": after}], "2026-08-26", "greenhouse", "acme"
+    )
+
+    assert events == []
+    assert state["1"]["dept"] == "Sales" and state["1"]["h"] == jhash({**old, "dept": "Sales"})
+
+    # A real edit between two known departments is still a change.
+    _, events = diff(
+        state, [{"id": "1", **old, "dept": "Engineering"}], "2026-08-27", "greenhouse", "acme"
+    )
+    assert [e["changed"] for e in events] == [["dept"]]
+
+
+def test_a_repost_across_the_department_backfill_day_is_still_not_a_fill():
+    """§7.5 repost rule compares stored `h` with the new id's `h`. On the first deploy of
+    the `/departments` call (and on any day that call failed) every stored Greenhouse hash
+    was computed with `dept=None` and every fetched job hashes with a name, so a repost that
+    day is billed as a fill: `days_open` set on the `removed`. Same canonical job, one side
+    with the department unknown, must still be recognised as the repost."""
+    old = {"t": "Backend Engineer", "loc": "Berlin", "dept": None, "remote": False}
+    prev = {"1": {**old, "h": jhash(old), "posted": "2026-08-01", "first_seen": "2026-08-01"}}
+
+    _, events = diff(prev, [{"id": "2", **old, "dept": "Engineering"}], TODAY, PROVIDER, COMPANY)
+
+    assert [(e["ev"], e["days_open"]) for e in events] == [("added", None), ("removed", None)]
