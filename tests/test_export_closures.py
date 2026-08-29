@@ -155,8 +155,15 @@ def test_open_zero_with_no_removals_is_a_real_measurement():
     rows, suppressed = ex.summarise([count(D1, "lever", "quiet", 0)], [])
     assert not suppressed
     assert rows == [
-        {"d": D1, "provider": "lever", "company": "quiet", "open": 0, "added": 0, "removed": 0,
-         "net": 0}
+        {
+            "d": D1,
+            "provider": "lever",
+            "company": "quiet",
+            "open": 0,
+            "added": 0,
+            "removed": 0,
+            "net": 0,
+        }
     ]
 
 
@@ -172,8 +179,15 @@ def test_summary_maths_and_that_changed_events_are_neither():
     ]
     rows, _ = ex.summarise(counts, events)
     assert rows == [
-        {"d": D1, "provider": "ashby", "company": "acme", "open": 7, "added": 3, "removed": 2,
-         "net": 1}
+        {
+            "d": D1,
+            "provider": "ashby",
+            "company": "acme",
+            "open": 7,
+            "added": 3,
+            "removed": 2,
+            "net": 1,
+        }
     ]
 
 
@@ -184,8 +198,12 @@ def test_sample_window_is_the_three_most_recent_days():
 
 def test_day_keys_selects_by_kind_and_window():
     keys = [
-        "counts.2026-08-26.0", "counts.2026-08-28.3", "events.2026-08-27.1",
-        "state.00", "watchlist", "meta",
+        "counts.2026-08-26.0",
+        "counts.2026-08-28.3",
+        "events.2026-08-27.1",
+        "state.00",
+        "watchlist",
+        "meta",
     ]
     assert ex.day_keys(keys, "counts", None, None) == ["counts.2026-08-26.0", "counts.2026-08-28.3"]
     assert ex.day_keys(keys, "counts", D2, None) == ["counts.2026-08-28.3"]

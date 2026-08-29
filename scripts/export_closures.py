@@ -84,12 +84,30 @@ SUMMARY_FIELDS: tuple[str, ...] = (*FREE_FIELDS, "net")
 #: assert on the same list the exporter is written against.
 FORBIDDEN_FIELDS: frozenset[str] = frozenset(
     {
-        "description", "descriptionHtml", "descriptionText", "body", "content", "summary",
-        "excerpt", "snippet",
-        "salary", "compensation", "salaryMin", "salaryMax", "pay",
-        "raw", "rawJson",
-        "recruiter", "hiringManager", "contact", "email", "mailbox_email", "phone",
-        "options_phone", "name", "candidate",
+        "description",
+        "descriptionHtml",
+        "descriptionText",
+        "body",
+        "content",
+        "summary",
+        "excerpt",
+        "snippet",
+        "salary",
+        "compensation",
+        "salaryMin",
+        "salaryMax",
+        "pay",
+        "raw",
+        "rawJson",
+        "recruiter",
+        "hiringManager",
+        "contact",
+        "email",
+        "mailbox_email",
+        "phone",
+        "options_phone",
+        "name",
+        "candidate",
     }
 )
 
