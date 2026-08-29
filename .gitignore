@@ -21,3 +21,6 @@ legal/
 # Build artefacts synced into each Actor by scripts/sync_actor_files.py (SPEC v2 §9.2)
 actors/*/core/
 actors/*/requirements.txt
+# Paid-tier exports: job-level rows, never published (scripts/export_closures.py)
+out/
+closures-archive/

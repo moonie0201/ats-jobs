@@ -99,7 +99,8 @@ CONTAINER_FLOOR_SECS = 34.0
 #: bound this on its own — nothing in a single run knows how many siblings ran today — so
 #: the month-to-date total is carried in `meta.spend` and checked before the sweep starts.
 #: Sized to bound 122 runs at :data:`DEFAULTS`'s ceiling (4 x 30.44 x $0.025 = $3.04);
-#: the *measured* monthly total is $1.76, so this is a runaway guard, not a quota.
+#: the *projected* monthly total is $1.76 (4 sweeps/day x 30.44 x $0.0157), so this is a
+#: runaway guard, not a quota. Actual spend to date is carried in `meta.spend`.
 MONTHLY_BUDGET_USD = 3.25
 
 #: §7.7 verified platform prices (R5 §2).
