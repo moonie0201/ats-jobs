@@ -136,13 +136,23 @@ def _ashby(job: dict[str, Any]) -> Salary | None:
 def _lever(job: dict[str, Any]) -> Salary | None:
     summary = _text(job.get("salaryDescription"))
     band = job.get("salaryRange")
-    if not isinstance(band, dict) or not band:
+    low, high = _number((band or {}).get("min")), _number((band or {}).get("max"))
+    # A Lever employer can switch the pay field on and leave it at zero, so `{"min": 0,
+    # "max": 0}` arrives looking like a declared range (seeker-os#35). That is pay *absent*,
+    # not a job paying nothing, and publishing it as `source="ats"` would assert a fact the
+    # employer never stated. A zero *min* beside a real max is a genuine open-ended low end
+    # and is kept.
+    if not isinstance(band, dict) or not band or not (low or high):
         return Salary(raw=summary) if summary else None
     return Salary(
-        min=_number(band.get("min")),
-        max=_number(band.get("max")),
+        min=low,
+        max=high,
         currency=_currency(band.get("currency")),
-        interval=normalize_interval(band.get("interval")),
+        # `interval` here is typed by the employer, not chosen from a list, so it gets the
+        # same magnitude test as a Greenhouse range label rather than being believed.
+        interval=_believable_interval(
+            normalize_interval(band.get("interval")), high if high is not None else low
+        ),
         source="ats",
         raw=summary,
     )
@@ -156,6 +166,28 @@ def _lever(job: dict[str, Any]) -> Salary | None:
 #: all — where the old ``or "year"`` default shipped "$18.85 per year".
 _YEAR_FLOOR = 1_000
 _HOUR_CEILING = 2_000
+#: The smallest amount each period could honestly pay, derived from the $2/hour floor the
+#: unlabelled branch already uses times the hours in that period — not a separate guess.
+#: It exists because a *provider* label can be wrong in the small direction: a live gopuff
+#: advert (seeker-os#35) carries `bi-week-salary` on a 22.4-26 band that is plainly hourly,
+#: and $26 a week is below any real wage. Above the floor the label is taken at its word.
+_PERIOD_FLOOR = {"hour": 2, "day": 2 * 8, "week": 2 * 40, "month": 2 * 160, "year": _YEAR_FLOOR}
+
+
+def _believable_interval(said: str | None, amount: float | None) -> str | None:
+    """The interval an amount really has, or ``None`` when label and magnitude disagree.
+
+    §4.5.3 step 3: a null beats a wrong answer. Shared by the Greenhouse range reader and
+    the Lever band reader so both use one set of bounds (R13).
+    """
+    if amount is None:
+        return said
+    if said == "hour":
+        return "hour" if _PERIOD_FLOOR["hour"] <= amount <= _HOUR_CEILING else None
+    if said:
+        floor = _PERIOD_FLOOR.get(said)
+        return said if floor is None or amount >= floor else None
+    return "year" if amount >= _YEAR_FLOOR else "hour" if amount >= _PERIOD_FLOOR["hour"] else None
 
 
 def _range_amount(band: dict[str, Any]) -> float | None:
@@ -183,17 +215,7 @@ def _range_interval(band: dict[str, Any]) -> str | None:
     board paying ¥2,500/hour would have its correct "hour" label dropped to null; fix by
     scaling the bounds per currency if a live board ever shows one.
     """
-    said = normalize_interval(_text(band.get("title")))
-    amount = _range_amount(band)
-    if amount is None:
-        return said
-    if said == "hour":
-        return "hour" if 2 <= amount <= _HOUR_CEILING else None
-    if said == "year":
-        return "year" if amount >= _YEAR_FLOOR else None
-    if said:
-        return said
-    return "year" if amount >= _YEAR_FLOOR else "hour" if amount >= 2 else None
+    return _believable_interval(normalize_interval(_text(band.get("title"))), _range_amount(band))
 
 
 def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None:

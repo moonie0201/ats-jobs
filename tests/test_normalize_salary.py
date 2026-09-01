@@ -112,22 +112,79 @@ def test_ashby_widest_range_across_salary_tiers():
 
 
 @pytest.mark.parametrize(
-    ("interval", "expected"),
-    [("per-year-salary", "year"), ("per-hour-wage", "hour"), ("per-month", "month")],
+    ("interval", "expected", "low", "high"),
+    [
+        ("per-year-salary", "year", 90000, 120000),
+        ("per-hour-wage", "hour", 45, 60),
+        ("per-month", "month", 7500, 10000),
+    ],
 )
-def test_lever_structured(interval, expected):
+def test_lever_structured(interval, expected, low, high):
+    """Amounts match their label here; the contradiction cases are below."""
     job = {
-        "salaryRange": {"min": 90000, "max": 120000, "currency": "GBP", "interval": interval},
+        "salaryRange": {"min": low, "max": high, "currency": "GBP", "interval": interval},
         "salaryDescription": "Competitive, plus equity",
     }
     salary = parse_salary(job)
     assert (salary.min, salary.max, salary.currency, salary.interval) == (
-        90000,
-        120000,
+        low,
+        high,
         "GBP",
         expected,
     )
     assert salary.source == "ats" and salary.raw == "Competitive, plus equity"
+
+
+def test_lever_zero_band_is_absent_pay_not_a_job_paying_nothing():
+    """A Lever employer can switch the field on and leave it at zero (seeker-os#35). That
+    must not be published as a declared range."""
+    job = {
+        "salaryRange": {"min": 0, "max": 0, "currency": "USD", "interval": "per-year-salary"},
+        "salaryDescription": "Competitive",
+    }
+    salary = parse_salary(job)
+    assert (salary.min, salary.max, salary.source) == (None, None, None)
+    assert salary.raw == "Competitive"
+    # With no text either, nothing at all is reported: `parse_salary` returns an empty
+    # Salary rather than None, so assert on the fields.
+    empty = parse_salary({"salaryRange": {"min": 0, "max": 0, "currency": "USD"}})
+    assert (empty.min, empty.max, empty.currency, empty.interval, empty.source, empty.raw) == (
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_lever_zero_min_with_a_real_max_is_kept():
+    salary = parse_salary(
+        {"salaryRange": {"min": 0, "max": 150000, "currency": "USD", "interval": "per-year-salary"}}
+    )
+    assert (salary.min, salary.max, salary.interval, salary.source) == (0, 150000, "year", "ats")
+
+
+@pytest.mark.parametrize(
+    ("low", "high", "interval", "expected"),
+    [
+        # Live gopuff advert: an hourly band labelled bi-weekly (seeker-os#35). $26 a week
+        # is below any real wage, so the label is not evidence and the amount is kept as is.
+        (22.4, 26, "bi-week-salary", None),
+        # The same magnitude with an honest label survives.
+        (22.4, 26, "per-hour-wage", "hour"),
+        # A real weekly band is believed.
+        (1200, 1500, "bi-week-salary", "week"),
+        # An annual magnitude cannot be an hourly rate.
+        (90000, 120000, "per-hour-wage", None),
+    ],
+)
+def test_lever_interval_label_is_tested_against_the_amount(low, high, interval, expected):
+    salary = parse_salary(
+        {"salaryRange": {"min": low, "max": high, "currency": "USD", "interval": interval}}
+    )
+    assert (salary.min, salary.max) == (low, high)  # the amount is never rescaled
+    assert salary.interval == expected
 
 
 def test_greenhouse_cents_and_default_interval():
