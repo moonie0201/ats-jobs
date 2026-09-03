@@ -684,3 +684,58 @@ def test_a_real_high_magnitude_currency_still_ships():
         }
     }
     assert structured_salary(job).source == "ats"
+
+
+DOORDASH_BASE_AND_OTE = [
+    {
+        "min_cents": 8568000,
+        "max_cents": 12600000,
+        "currency_type": "USD",
+        "title": "The national base pay range for this position with a commission component",
+        "blurb": "",
+    },
+    {
+        "min_cents": 11424000,
+        "max_cents": 16850000,
+        "currency_type": "USD",
+        "title": "The total on-target earnings (base + commissions)",
+        "blurb": "",
+    },
+]
+
+
+def test_greenhouse_on_target_earnings_never_widen_base_pay():
+    """DoorDash publishes base pay beside total on-target earnings on 60 of its 462
+    postings. They tie on currency and interval and neither names a place, so every
+    tie-break passed them through and the span put the commission number in salaryMax:
+    Account Manager, CPG went out as 85,680-168,500 when base tops out at 126,000."""
+    salary = parse_salary({"pay_input_ranges": DOORDASH_BASE_AND_OTE}, None, None)
+    assert (salary.min, salary.max) == (85680, 126000)
+    assert (salary.currency, salary.interval, salary.source) == ("USD", "year", "ats")
+
+
+def test_greenhouse_a_lone_on_target_band_is_still_reported():
+    """The filter narrows; it never empties. If on-target is all the employer published,
+    that is the only band there is and dropping it would invent a null."""
+    salary = parse_salary({"pay_input_ranges": DOORDASH_BASE_AND_OTE[1:]}, None, None)
+    assert (salary.min, salary.max) == (114240, 168500)
+
+
+def test_greenhouse_ote_matching_does_not_fire_on_remote_or_quoted_labels():
+    """`ote` as a bare substring hits "remote", "note" and "quoted"."""
+    ranges = [
+        {
+            "min_cents": 10000000,
+            "max_cents": 12000000,
+            "currency_type": "USD",
+            "title": "Remote US Pay Range",
+        },
+        {
+            "min_cents": 13000000,
+            "max_cents": 15000000,
+            "currency_type": "USD",
+            "title": "Quoted Range, see note",
+        },
+    ]
+    salary = parse_salary({"pay_input_ranges": ranges}, None, None)
+    assert (salary.min, salary.max) == (100000, 150000)

@@ -238,6 +238,31 @@ def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None
     )
 
 
+_TOTAL_PAY_LABELS = ("on-target", "on target", "total target", "total cash", "total compensation")
+_OTE = re.compile(r"\bote\b")
+
+
+def _is_total_pay(band: dict[str, Any]) -> bool:
+    """A band measuring base + variable pay, which is not the base band beside it.
+
+    DoorDash publishes both on one advert: "The national base pay range for this
+    position…" at 1,937-3,250 next to "The total on-target earnings (base +
+    commissions)" at 3,400-5,000, on 60 of its 462 postings measured 2026-09-03.
+    They tie on currency and interval and neither names a place, so every earlier
+    tie-break passed them through and the span put the commission number in
+    ``salaryMax`` — Account Manager, CPG went out as 85,680-168,500 when base tops
+    out at 126,000, a 34% overstatement asserted as ``salarySource: "ats"``.
+
+    ``_ashby`` never had this bug because Ashby types its components and we keep
+    only ``compensationType == "Salary"``. Greenhouse has no type field, so the
+    employer's own label is the only signal there is.
+
+    Reported by @GregoryBolshakov on tonyperkins/seeker-os#35.
+    """
+    label = (_text(band.get("title")) or "").casefold()
+    return any(term in label for term in _TOTAL_PAY_LABELS) or bool(_OTE.search(label))
+
+
 def _pick_greenhouse_range(
     ranges: list[dict[str, Any]], location: Location | None
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -255,6 +280,12 @@ def _pick_greenhouse_range(
     # coherent one exists: Verkada publishes a $1.00 "Estimated Hourly Pay Range" beside
     # the real $225k-$265k annual range, and `ranges[0]` used to win it outright.
     ranges = [band for band in ranges if _range_interval(band) is not None] or ranges
+    if len(ranges) == 1:
+        return ranges, None
+
+    # A base band and a total-pay band are not two guesses at one number, so spanning
+    # them is not a wider answer, it is a wrong one. Keep base pay while any survives.
+    ranges = [band for band in ranges if not _is_total_pay(band)] or ranges
     if len(ranges) == 1:
         return ranges, None
 
