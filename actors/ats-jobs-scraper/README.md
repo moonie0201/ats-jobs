@@ -1,4 +1,4 @@
-# ATS Jobs API — Greenhouse, Lever, Ashby +3
+# Job Postings API — Company Career Sites, No Key
 
 > **Unofficial.** Not affiliated with, endorsed by or sponsored by Greenhouse Software,
 > Lever, Ashby, Recruitee, Rippling or Personio. It calls each vendor's own public

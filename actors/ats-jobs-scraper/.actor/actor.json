@@ -1,8 +1,8 @@
 {
   "actorSpecification": 1,
   "name": "ats-jobs-scraper",
-  "title": "ATS Jobs API — Greenhouse, Lever, Ashby +3",
-  "description": "Live job postings from the Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio public job-board APIs. Company slugs or career-site URLs in, one normalized schema out with structured salary. No scraping, no proxies, no API keys.",
+  "title": "Job Postings API — Company Career Sites, No Key",
+  "description": "Live job postings from the public career-site APIs of Greenhouse, Lever, Ashby, Recruitee, Rippling and Personio. Company slug or careers URL in, one flat schema out with structured salary and postedAt — the date the board says the posting went up. No scraping, no proxies, no API keys.",
   "version": "0.1",
   "buildTag": "latest",
   "minMemoryMbytes": 256,
