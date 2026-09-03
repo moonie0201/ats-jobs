@@ -739,3 +739,51 @@ def test_greenhouse_ote_matching_does_not_fire_on_remote_or_quoted_labels():
     ]
     salary = parse_salary({"pay_input_ranges": ranges}, None, None)
     assert (salary.min, salary.max) == (100000, 150000)
+
+
+def test_greenhouse_a_band_that_names_itself_base_pay_is_base_pay():
+    """Two live titles pull in opposite directions and only the phrase separates them.
+
+    "Canada base pay range (total compensation package will be commensurate with
+    experience)" is a base band carrying a total-comp aside; DoorDash's "the total
+    on-target earnings (base + commissions)" says "base" only as an ingredient. A
+    bare-word test drops the first or keeps the second — both wrong."""
+    base_with_aside = {
+        "min_cents": 12000000,
+        "max_cents": 15000000,
+        "currency_type": "CAD",
+        "title": (
+            "Canada base pay range (total compensation package will be "
+            "commensurate with experience)"
+        ),
+    }
+    ote = {
+        "min_cents": 20000000,
+        "max_cents": 26000000,
+        "currency_type": "CAD",
+        "title": "The total on-target earnings (base + commissions) for this position",
+    }
+    salary = parse_salary({"pay_input_ranges": [base_with_aside, ote]}, None, None)
+    assert (salary.min, salary.max) == (120000, 150000)
+
+
+def test_greenhouse_an_either_or_band_is_not_dropped_as_total_pay():
+    """One employer titles every city band "On-target Earnings OR Base Salary range
+    (San Francisco, CA)" — 67 occurrences in a 140-board sample. It is explicitly
+    either, so it cannot be discarded as if it were only the total."""
+    ranges = [
+        {
+            "min_cents": 18000000,
+            "max_cents": 22000000,
+            "currency_type": "USD",
+            "title": "On-target Earnings OR Base Salary range (San Francisco, CA)",
+        },
+        {
+            "min_cents": 15000000,
+            "max_cents": 19000000,
+            "currency_type": "USD",
+            "title": "On-target Earnings OR Base Salary range (Denver, CO)",
+        },
+    ]
+    salary = parse_salary({"pay_input_ranges": ranges}, None, None)
+    assert (salary.min, salary.max) == (150000, 220000)

@@ -240,6 +240,7 @@ def _greenhouse(job: dict[str, Any], location: Location | None) -> Salary | None
 
 _TOTAL_PAY_LABELS = ("on-target", "on target", "total target", "total cash", "total compensation")
 _OTE = re.compile(r"\bote\b")
+_BASE_PHRASE = re.compile(r"\bbase (?:pay|salary|rate|compensation)\b")
 
 
 def _is_total_pay(band: dict[str, Any]) -> bool:
@@ -260,7 +261,15 @@ def _is_total_pay(band: dict[str, Any]) -> bool:
     Reported by @GregoryBolshakov on tonyperkins/seeker-os#35.
     """
     label = (_text(band.get("title")) or "").casefold()
-    return any(term in label for term in _TOTAL_PAY_LABELS) or bool(_OTE.search(label))
+    if not (any(term in label for term in _TOTAL_PAY_LABELS) or _OTE.search(label)):
+        return False
+    # A band that names itself base pay is base pay, whatever else the title
+    # mentions. Live titles need this in both directions: "Canada base pay range
+    # (total compensation package will be commensurate with experience)" is a base
+    # band carrying a total-comp aside, while DoorDash's "the total on-target
+    # earnings (base + commissions)" says "base" only as an ingredient — which is
+    # why this tests for the phrase and not the bare word.
+    return not _BASE_PHRASE.search(label)
 
 
 def _pick_greenhouse_range(
