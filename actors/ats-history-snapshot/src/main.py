@@ -55,7 +55,7 @@ DEFAULTS: dict[str, Any] = {
     "shard": 0,
     "shardCount": 4,
     "maxCompanies": 0,  # 0 = the whole shard
-    "costCeilingUsd": 0.04,
+    "costCeilingUsd": 0.15,
     "maxConcurrency": 8,
     "requestTimeoutSecs": 30,
     "maxVerifyRequests": 1000,
@@ -66,8 +66,12 @@ DEFAULTS: dict[str, Any] = {
 }
 
 NUMERIC_BOUNDS: dict[str, tuple[float, float]] = {
-    "shard": (0, 7),
-    "shardCount": (1, 8),
+    "shard": (0, 23),  # must track shardCount's ceiling or high shards sweep nothing
+    # Was (1, 8), which fitted a 1,574-board watchlist into four 3,600 s runs. The
+    # roster expansion needs ~16 shards to keep each run under the same timeout —
+    # more shards cost nothing extra (the compute is the same either way) and a run
+    # that dies takes a sixteenth of the sweep with it instead of a quarter.
+    "shardCount": (1, 24),
     "maxCompanies": (0, 20_000),
     "costCeilingUsd": (0.0, 5.0),
     "maxConcurrency": (1, 16),
@@ -148,11 +152,18 @@ CONTAINER_FLOOR_SECS = 34.0
 #: §7.7/§7.8: the whole Actor's share of the $5/month credit. The per-run ceiling cannot
 #: bound this on its own — nothing in a single run knows how many siblings ran today — so
 #: the month-to-date total is carried in `meta.spend` and checked before the sweep starts.
-#: Sized to bound 122 runs at :data:`DEFAULTS`'s ceiling (4 x 30.44 x $0.04 = $4.87)
-#: under the $5.00 credit; the *projected* total is ~$3.3 (4 sweeps/day x 30.44 x the
-#: $0.0265 estimate a full shard measured on 2026-08-29, ~$2.8 platform-billed), so this
-#: is a runaway guard, not a quota. Actual spend is in `meta.spend`.
-MONTHLY_BUDGET_USD = 4.9
+#:
+#: Was 4.9, sized to keep four 385-company sweeps a day inside the $5.00 free credit.
+#: The watchlist went from 1,574 boards to the full public ATS roster on 2026-09-04 and
+#: the credit stopped being the constraint; this is now real money and the number is set
+#: deliberately rather than inherited. Sizing: a 385-company shard measured 784 s and
+#: $0.023 platform-billed on 2026-08-29, so ~2.04 s and ~$0.00006 per company. Eight
+#: sweeps a day over ~12k live boards projects to ~$25/month. The guard sits at $32 —
+#: enough headroom that a slow provider day does not stop the record, tight enough that
+#: a runaway costs a month's coffee rather than a month's rent.
+#:
+#: A lost day cannot be back-filled, so this number failing closed is itself a cost.
+MONTHLY_BUDGET_USD = 32.0
 
 #: §7.7 verified platform prices (R5 §2).
 PRICE_CU_USD = 0.20  # 1 CU = 1 GB-hour of compute

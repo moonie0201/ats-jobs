@@ -93,8 +93,8 @@ def test_config_defaults_and_bounds():
     hostile = snap.read_config(
         {"shard": 99, "shardCount": 200, "maxConcurrency": "lots", "costCeilingUsd": -3}
     )
-    assert hostile["shardCount"] == 8
-    assert hostile["shard"] == 7, "a shard past the last one would sweep nothing, silently"
+    assert hostile["shardCount"] == 24
+    assert hostile["shard"] == 23, "a shard past the last one would sweep nothing, silently"
     assert hostile["maxConcurrency"] == 8
     assert hostile["costCeilingUsd"] == 0.0
 
