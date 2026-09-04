@@ -6,10 +6,10 @@
     "shard": {
       "title": "Shard",
       "type": "integer",
-      "description": "Which shard of the 64 state buckets this run owns. Shard 0 owns buckets 00-15, shard 1 owns 16-31, and so on (SPEC v2 §7.2). One Apify Schedule per shard, staggered 25 minutes apart so the global per-host rate stays at 2 rps. The shard count is fixed at 4 in code: a schedule that disagreed with its siblings would double the request rate on every shared ATS host.",
+      "description": "Which shard of the watchlist to sweep. Apify validates this schema before the Actor starts, so it has to track main.py's BOUNDS or a valid shard is refused at the door — shards 8-31 were refused on 2026-09-04 because this said 7 while the code said 63.",
       "default": 0,
       "minimum": 0,
-      "maximum": 7
+      "maximum": 63
     },
     "maxCompanies": {
       "title": "Max companies",
@@ -23,7 +23,7 @@
       "title": "Cost ceiling (USD per run)",
       "type": "number",
       "description": "Hard budget guard, per run. The run refuses to start if its estimated platform cost exceeds this and stops early — failing, so the schedule emails you — once the running estimate reaches it; removal verification also stops mid-bucket and waits for the next sweep. A full 385-company shard with the Greenhouse /departments call measured $0.0265 by this estimate ($0.023 billed) on 2026-08-29: 1.5x headroom. The monthly cap is separate: the run refuses to start once meta.spend passes $4.90.",
-      "default": 0.04,
+      "default": 0.15,
       "minimum": 0,
       "maximum": 5
     },
@@ -76,6 +76,15 @@
       "editor": "textfield",
       "description": "Used only with the purge field above. The company slug to drop; empty purges the whole provider.",
       "default": ""
+    },
+    "shardCount": {
+      "title": "Shard count",
+      "type": "integer",
+      "description": "How many shards the 64 buckets are split into. Must divide 64, or some shards get three buckets and others two and the three-bucket ones overrun the 25-minute stagger.",
+      "editor": "number",
+      "default": 32,
+      "minimum": 1,
+      "maximum": 64
     }
   },
   "required": []
