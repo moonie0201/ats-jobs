@@ -90,13 +90,23 @@ def test_config_defaults_and_bounds():
     assert cfg["costCeilingUsd"] == snap.DEFAULTS["costCeilingUsd"] and cfg["maxCompanies"] == 0
     assert cfg["purgeProvider"] == "" and cfg["purgeCompany"] == ""
 
-    hostile = snap.read_config(
-        {"shard": 99, "shardCount": 200, "maxConcurrency": "lots", "costCeilingUsd": -3}
-    )
-    assert hostile["shardCount"] == 64
-    assert hostile["shard"] == 63, "a shard past the last one would sweep nothing, silently"
-    assert hostile["maxConcurrency"] == 8
-    assert hostile["costCeilingUsd"] == 0.0
+    # Tuning is clamped; identity is not. `maxConcurrency` and `costCeilingUsd` can be
+    # nudged into range because a slower or cheaper run is still the same run.
+    tuning = snap.read_config({"maxConcurrency": "lots", "costCeilingUsd": -3})
+    assert tuning["maxConcurrency"] == 8
+    assert tuning["costCeilingUsd"] == 0.0
+
+    # `shardCount` out of range used to be clamped, and on 2026-09-04 that silently swept
+    # the wrong buckets: the schedules asked for 32 against a build bounded at 24, and
+    # `buckets_for_shard(2, 24)` is a different set of companies than
+    # `buckets_for_shard(2, 32)`. The run went green and buckets 4 and 5 went uncollected.
+    with pytest.raises(ValueError, match="different partition"):
+        snap.read_config({"shardCount": 200})
+
+    # Same reason: shard 99 of 32 is not shard 31, it is a caller that thinks the
+    # partition is bigger than this build does.
+    with pytest.raises(ValueError, match="does not exist"):
+        snap.read_config({"shard": 99, "shardCount": 32})
 
 
 def test_config_survives_nan_and_infinity():

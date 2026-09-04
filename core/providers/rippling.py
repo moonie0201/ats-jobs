@@ -31,7 +31,12 @@ from core.normalize.location import parse_location
 from core.normalize.record import build_job_record
 from core.normalize.redact import strip_contact_fields
 
-SPEC = ProviderSpec(name="rippling", host_rate_limit=2.0, needs_detail_call=True)
+#: 0.16 rps, not the 2.0 default: Rippling documents 100 requests per 10 minutes and
+#: `core.http.HOST_RATE_LIMITS` is what actually enforces it. This field said 2.0 for a
+#: while, which was a 12x lie sitting next to five tests that asserted it — nothing reads
+#: it at runtime, so the tests were checking a number with no effect. `test_http.py`
+#: now pins the two together.
+SPEC = ProviderSpec(name="rippling", host_rate_limit=0.16, needs_detail_call=True)
 
 LIST_URL = "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs"
 

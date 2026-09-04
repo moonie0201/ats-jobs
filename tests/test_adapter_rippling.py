@@ -109,7 +109,7 @@ def test_registry_exposes_the_adapter():
     assert module is adapter
     assert adapter.SPEC.name == "rippling"
     assert adapter.SPEC.needs_detail_call is True
-    assert adapter.SPEC.host_rate_limit == 2.0
+    assert adapter.SPEC.host_rate_limit == 0.16  # Rippling documents 100 req/10 min
 
 
 # --- §10.1 exact expected values for the first record ---------------------------------------

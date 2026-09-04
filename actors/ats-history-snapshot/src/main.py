@@ -217,7 +217,30 @@ def read_config(raw: dict[str, Any]) -> dict[str, Any]:
     for key in NUMERIC_BOUNDS:
         value = _bounded(key, cfg[key])
         cfg[key] = value if key == "costCeilingUsd" else int(value)
-    cfg["shard"] = min(cfg["shard"], cfg["shardCount"] - 1)
+
+    # `shard` and `shardCount` are identity, not tuning. Clamping them keeps the run
+    # green while it sweeps a different set of boards than the caller asked for, and
+    # that is the failure this whole Actor exists to avoid.
+    #
+    # It already happened. On 2026-09-04 the schedules passed shardCount 32 to a build
+    # whose bound was still 24; `_bounded` quietly returned 24, `buckets_for_shard(2, 24)`
+    # is not `buckets_for_shard(2, 32)`, and the run swept the wrong buckets and reported
+    # success. Buckets 4 and 5 went uncollected for the day and nothing said so.
+    #
+    # Out of range means the caller and this build disagree about the topology. There is
+    # no safe guess for that, so fail loudly and let the platform's alert carry it.
+    requested_count = raw.get("shardCount")
+    if requested_count is not None and int(requested_count) != cfg["shardCount"]:
+        raise ValueError(
+            f"shardCount {requested_count} is outside this build's bounds "
+            f"{NUMERIC_BOUNDS['shardCount']}; refusing to sweep a different partition "
+            "than the caller asked for"
+        )
+    if cfg["shard"] >= cfg["shardCount"]:
+        raise ValueError(
+            f"shard {cfg['shard']} does not exist in a {cfg['shardCount']}-shard "
+            "partition; refusing to silently sweep another shard"
+        )
     cfg["reseedWatchlist"] = bool(cfg["reseedWatchlist"])
     cfg["force"] = bool(cfg["force"])
     cfg["purgeProvider"] = str(cfg["purgeProvider"] or "").strip().lower()

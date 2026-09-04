@@ -255,3 +255,33 @@ async def test_a_sub_one_rps_bucket_still_hands_out_tokens():
     await bucket.acquire(sleep)  # must wait ~1/0.16 s, and must return
 
     assert now[0] - started == pytest.approx(1 / 0.16, rel=0.01)
+
+
+def test_declared_provider_rate_matches_what_http_enforces():
+    """`ProviderSpec.host_rate_limit` is read by nothing at runtime — `HOST_RATE_LIMITS`
+    in `core.http` is what actually throttles. That made the field free to drift, and it
+    did: Rippling declared 2.0 while the enforced rate was 0.16, a 12x lie with five tests
+    asserting the wrong half of it.
+
+    Keeping the two in one assertion is the cheapest way to make the next drift loud. The
+    hosts are listed here rather than derived because each provider's URL constants are
+    private to it, and a table someone must edit is easier to notice than a lookup that
+    silently returns the default.
+    """
+    from core.http import DEFAULT_RATE, HOST_RATE_LIMITS
+    from core.providers import ashby, greenhouse, lever, personio, recruitee, rippling
+
+    primary_host = {
+        greenhouse: "boards-api.greenhouse.io",
+        lever: "api.lever.co",
+        ashby: "api.ashbyhq.com",
+        recruitee: "recruitee.com",
+        rippling: "api.rippling.com",
+        personio: "jobs.personio.com",
+    }
+    for module, host in primary_host.items():
+        enforced = HOST_RATE_LIMITS.get(host, DEFAULT_RATE)
+        assert module.SPEC.host_rate_limit == enforced, (
+            f"{module.SPEC.name} declares {module.SPEC.host_rate_limit} rps on {host} "
+            f"but core.http enforces {enforced}"
+        )
