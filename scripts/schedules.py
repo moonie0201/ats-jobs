@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The four daily `ats-history-snapshot` Schedules, as code (SPEC v2 §7.2).
+"""The daily `ats-history-snapshot` Schedules, as code (SPEC v2 §7.2).
 
 The 25-minute stagger is load-bearing and it used to live only in the Apify Console,
 where one edit silently breaks §5.12: the per-host token bucket in `core.http` is per
@@ -25,9 +25,26 @@ from apify_client import ApifyClient
 
 ACTOR_ID = "SMtppr38BwH4VJySF"  # acotr_moonie/ats-history-snapshot
 
-#: §7.2's stagger. Four shards, 25 minutes apart, UTC. Keep them apart by more than
-#: `RUN_DEADLINE_SECS` (20 min) or the guarantee above stops holding.
-CRONS = {0: "0 3 * * *", 1: "25 3 * * *", 2: "50 3 * * *", 3: "15 4 * * *"}
+#: §7.2's stagger. Shards run 25 minutes apart, UTC, and must not overlap.
+#:
+#: A shard is a whole number of the 64 buckets, so SHARD_COUNT has to divide 64 or the
+#: three-bucket shards overrun the stagger while the two-bucket ones idle. Measured on
+#: 2026-09-04 against the 14,243-board watchlist: 936 companies (4 buckets, 1/16th) took
+#: 1,532 s and $0.044 — past the 1,500 s stagger. Two buckets is ~445 companies and
+#: ~730 s, which clears both the stagger and `RUN_DEADLINE_SECS` (1,200 s) with room for
+#: a slow provider day.
+SHARD_COUNT = 32
+STAGGER_MIN = 25
+FIRST_HOUR = 3  # UTC; the sweep then runs to ~16:20
+
+
+def _cron(shard: int) -> str:
+    """`shard` minutes-from-first-run, as a daily cron. 32 shards x 25 min = 13h20m."""
+    total = FIRST_HOUR * 60 + shard * STAGGER_MIN
+    return f"{total % 60} {(total // 60) % 24} * * *"
+
+
+CRONS = {shard: _cron(shard) for shard in range(SHARD_COUNT)}
 
 #: §7.1 / H1 L4: the budget guard bills compute at the tier it is told about, so an
 #: unpinned schedule makes every cost number in the run log wrong by 2x.
@@ -48,7 +65,7 @@ def _get(obj: Any, *names: str) -> Any:
 def payload(shard: int, cron: str) -> dict[str, Any]:
     return {
         "name": f"ats-history-snapshot-shard-{shard}",
-        "title": f"ATS history snapshot - shard {shard}/4",
+        "title": f"ATS history snapshot - shard {shard}/{SHARD_COUNT}",
         "cron_expression": cron,
         "timezone": "UTC",
         "is_enabled": True,
@@ -56,17 +73,17 @@ def payload(shard: int, cron: str) -> dict[str, Any]:
         # still going would double the request rate on every host it shares.
         "is_exclusive": True,
         "description": (
-            f"SPEC v2 7.2: sweeps buckets {shard * 16:02d}-{shard * 16 + 15:02d} of the "
-            "watchlist daily, staggered 25 min after the previous shard so the global "
-            "per-host rate stays at 5.12's 2 rps. Memory is pinned at 512 MB because the "
-            "budget guard bills compute at the tier it is told."
+            f"SPEC v2 7.2: sweeps {64 // SHARD_COUNT} of the 64 watchlist buckets daily, "
+            f"staggered {STAGGER_MIN} min after the previous shard so the global per-host "
+            "rate stays at 5.12's 2 rps. Memory is pinned at 512 MB because the budget "
+            "guard bills compute at the tier it is told."
         ),
         "actions": [
             {
                 "type": "RUN_ACTOR",
                 "actorId": ACTOR_ID,
                 "runInput": {
-                    "body": json.dumps({"shard": shard}),
+                    "body": json.dumps({"shard": shard, "shardCount": SHARD_COUNT}),
                     "contentType": "application/json; charset=utf-8",
                 },
                 "runOptions": {

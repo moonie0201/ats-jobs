@@ -53,7 +53,7 @@ VERSION = 1
 
 DEFAULTS: dict[str, Any] = {
     "shard": 0,
-    "shardCount": 4,
+    "shardCount": 32,
     "maxCompanies": 0,  # 0 = the whole shard
     "costCeilingUsd": 0.15,
     "maxConcurrency": 8,
@@ -66,12 +66,14 @@ DEFAULTS: dict[str, Any] = {
 }
 
 NUMERIC_BOUNDS: dict[str, tuple[float, float]] = {
-    "shard": (0, 23),  # must track shardCount's ceiling or high shards sweep nothing
-    # Was (1, 8), which fitted a 1,574-board watchlist into four 3,600 s runs. The
-    # roster expansion needs ~16 shards to keep each run under the same timeout —
-    # more shards cost nothing extra (the compute is the same either way) and a run
-    # that dies takes a sixteenth of the sweep with it instead of a quarter.
-    "shardCount": (1, 24),
+    "shard": (0, 63),  # must track shardCount's ceiling or high shards sweep nothing
+    # Was (1, 8), which fitted a 1,574-board watchlist into four runs. The ceiling is
+    # now `BUCKETS`: a shard is a set of whole buckets, so a shardCount that does not
+    # divide 64 gives some shards three buckets and others two, and the three-bucket
+    # ones are the ones that overrun the stagger. Measured 2026-09-04: 936 companies
+    # (4 buckets) took 1,532 s, past the 1,500 s stagger. Two buckets is ~445
+    # companies and ~730 s, which clears both the stagger and RUN_DEADLINE_SECS.
+    "shardCount": (1, 64),
     "maxCompanies": (0, 20_000),
     "costCeilingUsd": (0.0, 5.0),
     "maxConcurrency": (1, 16),

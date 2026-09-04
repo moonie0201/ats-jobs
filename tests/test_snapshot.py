@@ -86,15 +86,15 @@ def stub_fetch(monkeypatch):
 
 def test_config_defaults_and_bounds():
     cfg = snap.read_config({})
-    assert cfg["shard"] == 0 and cfg["shardCount"] == 4
+    assert cfg["shard"] == 0 and cfg["shardCount"] == 32
     assert cfg["costCeilingUsd"] == snap.DEFAULTS["costCeilingUsd"] and cfg["maxCompanies"] == 0
     assert cfg["purgeProvider"] == "" and cfg["purgeCompany"] == ""
 
     hostile = snap.read_config(
         {"shard": 99, "shardCount": 200, "maxConcurrency": "lots", "costCeilingUsd": -3}
     )
-    assert hostile["shardCount"] == 24
-    assert hostile["shard"] == 23, "a shard past the last one would sweep nothing, silently"
+    assert hostile["shardCount"] == 64
+    assert hostile["shard"] == 63, "a shard past the last one would sweep nothing, silently"
     assert hostile["maxConcurrency"] == 8
     assert hostile["costCeilingUsd"] == 0.0
 
