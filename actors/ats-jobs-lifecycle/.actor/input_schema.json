@@ -1,0 +1,37 @@
+{
+  "title": "Job Posting Age & Lifecycle Enricher",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "datasetId": {
+      "title": "Source dataset",
+      "type": "string",
+      "description": "Dataset of job rows to enrich. When this Actor is connected as an integration the platform supplies it; leave the prefilled {{resource.defaultDatasetId}} alone.",
+      "editor": "textfield",
+      "prefill": "{{resource.defaultDatasetId}}"
+    },
+    "urlField": {
+      "title": "URL field",
+      "type": "array",
+      "description": "Which column holds the posting URL. Leave empty and the common names are tried (jobUrl, url, applyUrl, absolute_url, hostedUrl, link), then any value that parses as a board URL.",
+      "editor": "stringList",
+      "default": []
+    },
+    "maxRows": {
+      "title": "Row cap",
+      "type": "integer",
+      "description": "Stop after this many rows. An integration fires on someone else's schedule, so the ceiling has to be yours.",
+      "editor": "number",
+      "default": 5000,
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "keepSourceFields": {
+      "title": "Keep the source columns",
+      "type": "boolean",
+      "description": "Merge the original row into the output instead of returning only lifecycle fields.",
+      "default": false
+    }
+  },
+  "required": []
+}

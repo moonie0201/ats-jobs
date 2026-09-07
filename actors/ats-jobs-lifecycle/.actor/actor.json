@@ -1,0 +1,17 @@
+{
+  "actorSpecification": 1,
+  "name": "ats-jobs-lifecycle",
+  "title": "Job Posting Age & Lifecycle Enricher",
+  "description": "Adds posting age to another Actor's job dataset: the board's own posted date, our first sighting and days open. Lever, Ashby and Rippling resolve to a posting; Greenhouse, Recruitee and Personio are named unsupported, not guessed. No scraping, no proxies, no api keys.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 512,
+  "maxMemoryMbytes": 1024,
+  "usesStandbyMode": false,
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

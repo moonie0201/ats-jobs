@@ -1,0 +1,221 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "type": "object",
+    "properties": {
+      "sourceUrl": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Source URL",
+        "description": "The posting URL we were given, unchanged.",
+        "example": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245"
+      },
+      "provider": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Provider",
+        "description": "Which board the URL belongs to. Null when the URL is not one we recognise at all.",
+        "example": "ashby",
+        "enum": [
+          "lever",
+          "ashby",
+          "rippling",
+          "greenhouse",
+          "recruitee",
+          "personio",
+          null
+        ]
+      },
+      "company": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Company slug",
+        "description": "Board slug taken from the URL path.",
+        "example": "ramp"
+      },
+      "jobId": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Job id",
+        "description": "The board API's own job key, taken from the URL path. Only lever, ashby and rippling put it there.",
+        "example": "34413f8d-26bf-4bbc-8ade-eb309a0e2245"
+      },
+      "coverage": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Coverage",
+        "description": "Why this row has, or has not, lifecycle facts. Only `tracked` carries them; the rest exist so an empty row is never read as 'this job never closed'.",
+        "example": "tracked",
+        "enum": [
+          "tracked",
+          "job_unknown",
+          "board_untracked",
+          "unsupported_provider",
+          "unresolved_url"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Board fetch status",
+        "description": "Our last fetch result for this board, straight from the daily sweep: ok, not_found, unconfirmed, rate_limited, http_error, parse_error, timeout, max_jobs_reached, budget_exhausted, no_companies, unresolved_domain, provider_unavailable, provider_degraded.",
+        "example": "ok",
+        "enum": [
+          "ok",
+          "not_found",
+          "unconfirmed",
+          "rate_limited",
+          "http_error",
+          "parse_error",
+          "timeout",
+          "max_jobs_reached",
+          "budget_exhausted",
+          "no_companies",
+          "unresolved_domain",
+          "provider_unavailable",
+          "provider_degraded",
+          null
+        ]
+      },
+      "historyTrackedSince": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "History tracked since",
+        "description": "First day we watched this board. Every date here is censored at this one.",
+        "example": "2026-09-04"
+      },
+      "historyWindowDays": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "title": "History window (days)",
+        "description": "How many days we have watched the board. A small number cannot support a claim about the posting's whole life.",
+        "example": 4
+      },
+      "firstSeen": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "First seen",
+        "description": "First day we saw this posting. Not its posting date.",
+        "example": "2026-09-04"
+      },
+      "firstSeenCensored": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "title": "First seen is censored",
+        "description": "True when the posting was already up when we started watching, so firstSeen is a floor on its age rather than its age. On 2026-09-05 this was true of 90% of recorded removals.",
+        "example": true
+      },
+      "postedAt": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Posted at",
+        "description": "The board's own posted date, when it publishes one. This is the real age and it beats our first sighting.",
+        "example": "2026-04-07"
+      },
+      "postedAtSource": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Posted-at source",
+        "description": "Which provider field postedAt came from.",
+        "example": "publishedAt"
+      },
+      "ageDays": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "title": "Age (days)",
+        "description": "Days since postedAt when the board gave one, else since firstSeen.",
+        "example": 154
+      },
+      "ageBasis": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Age basis",
+        "description": "board = the employer's own date; observed = our first sighting; observed_floor = our first sighting on a posting that was already up, so the age is a floor.",
+        "example": "board",
+        "enum": [
+          "board",
+          "observed",
+          "observed_floor",
+          null
+        ]
+      },
+      "lastSeen": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Last seen",
+        "description": "Last day we saw it on the board.",
+        "example": "2026-09-08"
+      },
+      "stillListed": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "title": "Still listed",
+        "description": "True when the posting is on the board today. Null, never false, when we cannot say — a missing id is not an observed removal.",
+        "example": true
+      },
+      "duplicateOf": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Duplicate of",
+        "description": "Set when an earlier row in this run resolved to the same posting. The row is still returned; it is not charged twice.",
+        "example": "ashby:ramp:34413f8d-26bf-4bbc-8ade-eb309a0e2245"
+      }
+    }
+  },
+  "views": {
+    "overview": {
+      "title": "Lifecycle",
+      "transformation": {
+        "fields": [
+          "sourceUrl",
+          "provider",
+          "company",
+          "coverage",
+          "postedAt",
+          "ageDays",
+          "ageBasis",
+          "firstSeenCensored",
+          "historyWindowDays",
+          "stillListed"
+        ]
+      },
+      "display": {
+        "component": "table"
+      }
+    }
+  }
+}
