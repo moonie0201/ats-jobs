@@ -22,6 +22,14 @@ here and you get the lifecycle columns back, in your own account.
 
 It also runs standalone: pass a `datasetId` yourself.
 
+**The upstream dataset has to be readable.** This Actor reads it over the public items
+endpoint, which needs no token — set the source dataset's access to *Anyone with ID can
+read* (Console → the dataset → Settings, or `generalAccess: ANYONE_WITH_ID_CAN_READ` over
+the API). A private dataset is refused: an Actor runs under limited permissions and its
+scoped token cannot open a dataset it did not create, even one in the same account.
+Measured 2026-09-08 — the same dataset failed private and succeeded public, unchanged
+otherwise.
+
 ## What comes back
 
 ```json

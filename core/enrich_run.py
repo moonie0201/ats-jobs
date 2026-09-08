@@ -29,6 +29,9 @@ logger = logging.getLogger("apify")
 
 LIFECYCLE_EVENT = "lifecycle"
 
+#: Dataset items over plain REST — no token, so no permission grant to get wrong.
+ITEMS_URL = "https://api.apify.com/v2/datasets"
+
 #: Column names upstream Actors use for the posting URL, in the order we try them. The
 #: user can override with `urlField`; this is what makes the integration work without them
 #: having to look.
@@ -50,6 +53,43 @@ def _fetch_index() -> dict[str, Any]:
     if blob[:2] == b"\x1f\x8b":
         blob = gzip.decompress(blob)
     return json.loads(blob)
+
+
+async def _make_reader(dataset_id: str):
+    """A `(offset, limit) -> list[dict]` over the upstream dataset.
+
+    Public REST first: it needs no token and therefore no permission grant, which is the
+    whole difficulty. If that is refused the dataset is private, and only then is the
+    scoped SDK client worth trying — it will work when the caller genuinely granted access
+    and fail loudly when they did not, which is the honest outcome either way.
+    """
+
+    def _rest(offset: int, limit: int) -> list[dict[str, Any]] | None:
+        url = f"{ITEMS_URL}/{dataset_id}/items?offset={offset}&limit={limit}&format=json"
+        request = urllib.request.Request(url, headers={"User-Agent": "ats-jobs-lifecycle"})
+        try:
+            body = urllib.request.urlopen(request, timeout=60).read()
+        except Exception:
+            return None
+        rows = json.loads(body)
+        return rows if isinstance(rows, list) else []
+
+    probe = await asyncio.to_thread(_rest, 0, 1)
+    if probe is not None:
+        logger.info("reading upstream dataset over public REST")
+
+        async def read_rest(offset: int, limit: int) -> list[dict[str, Any]]:
+            return await asyncio.to_thread(_rest, offset, limit) or []
+
+        return read_rest
+
+    logger.info("public REST refused; falling back to the scoped SDK client")
+    dataset = await Actor.open_dataset(id=dataset_id)
+
+    async def read_sdk(offset: int, limit: int) -> list[dict[str, Any]]:
+        return (await dataset.get_data(offset=offset, limit=limit)).items
+
+    return read_sdk
 
 
 def _config(raw: dict[str, Any]) -> dict[str, Any]:
@@ -109,7 +149,13 @@ async def main() -> None:
             (payload.get("counts") or {}).get("boards"),
             (payload.get("counts") or {}).get("jobs"),
         )
-        dataset = await Actor.open_dataset(id=cfg["datasetId"])
+        # Two ways to read the upstream dataset, and the SDK one is not the reliable half.
+        # `Actor.open_dataset` uses the run's scoped token, and a limited-permission Actor
+        # is refused with ForbiddenError even for a dataset in the same account — measured
+        # 2026-09-08 against our own prior run. The REST items endpoint answers 200 for a
+        # dataset whose access allows it, with no token at all, so try that first and keep
+        # the SDK as the path for a private dataset the caller has actually granted.
+        reader = await _make_reader(cfg["datasetId"])
 
         seen: set[str] = set()
         read = pushed = charged = 0
@@ -117,8 +163,7 @@ async def main() -> None:
         offset = 0
 
         while read < cfg["maxRows"]:
-            page = await dataset.get_data(offset=offset, limit=min(PAGE, cfg["maxRows"] - read))
-            items = page.items
+            items = await reader(offset, min(PAGE, cfg["maxRows"] - read))
             if not items:
                 break
             offset += len(items)

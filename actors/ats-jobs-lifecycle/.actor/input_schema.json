@@ -6,9 +6,8 @@
     "datasetId": {
       "title": "Source dataset",
       "type": "string",
-      "description": "Dataset of job rows to enrich. When this Actor is connected as an integration the platform supplies it; leave the prefilled {{resource.defaultDatasetId}} alone.",
-      "editor": "textfield",
-      "prefill": "{{resource.defaultDatasetId}}"
+      "description": "Dataset of job rows to enrich. Declared as a dataset resource so the platform grants read access — a plain string id is refused with ForbiddenError. When this Actor is connected as an integration the platform supplies it.",
+      "resourceType": "dataset"
     },
     "urlField": {
       "title": "URL field",
