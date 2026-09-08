@@ -64,31 +64,6 @@
           "unresolved_url"
         ]
       },
-      "status": {
-        "type": [
-          "string",
-          "null"
-        ],
-        "title": "Board fetch status",
-        "description": "Our last fetch result for this board, straight from the daily sweep: ok, not_found, unconfirmed, rate_limited, http_error, parse_error, timeout, max_jobs_reached, budget_exhausted, no_companies, unresolved_domain, provider_unavailable, provider_degraded.",
-        "example": "ok",
-        "enum": [
-          "ok",
-          "not_found",
-          "unconfirmed",
-          "rate_limited",
-          "http_error",
-          "parse_error",
-          "timeout",
-          "max_jobs_reached",
-          "budget_exhausted",
-          "no_companies",
-          "unresolved_domain",
-          "provider_unavailable",
-          "provider_degraded",
-          null
-        ]
-      },
       "historyTrackedSince": {
         "type": [
           "string",
@@ -134,15 +109,6 @@
         "description": "The board's own posted date, when it publishes one. This is the real age and it beats our first sighting.",
         "example": "2026-04-07"
       },
-      "postedAtSource": {
-        "type": [
-          "string",
-          "null"
-        ],
-        "title": "Posted-at source",
-        "description": "Which provider field postedAt came from.",
-        "example": "publishedAt"
-      },
       "ageDays": {
         "type": [
           "integer",
@@ -167,15 +133,6 @@
           null
         ]
       },
-      "lastSeen": {
-        "type": [
-          "string",
-          "null"
-        ],
-        "title": "Last seen",
-        "description": "Last day we saw it on the board.",
-        "example": "2026-09-08"
-      },
       "stillListed": {
         "type": [
           "boolean",
@@ -193,6 +150,31 @@
         "title": "Duplicate of",
         "description": "Set when an earlier row in this run resolved to the same posting. The row is still returned; it is not charged twice.",
         "example": "ashby:ramp:34413f8d-26bf-4bbc-8ade-eb309a0e2245"
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "title": "Board fetch status",
+        "description": "Always null here, and named so the omission is explicit rather than an oversight. The published age index carries live postings only, not the daily sweep's per-board result, so none of ok, not_found, unconfirmed, rate_limited, http_error, parse_error, timeout, max_jobs_reached, budget_exhausted, no_companies, unresolved_domain, provider_unavailable or provider_degraded can be reported. Use `coverage` instead.",
+        "enum": [
+          "ok",
+          "not_found",
+          "unconfirmed",
+          "rate_limited",
+          "http_error",
+          "parse_error",
+          "timeout",
+          "max_jobs_reached",
+          "budget_exhausted",
+          "no_companies",
+          "unresolved_domain",
+          "provider_unavailable",
+          "provider_degraded",
+          null
+        ],
+        "example": "ok"
       }
     }
   },

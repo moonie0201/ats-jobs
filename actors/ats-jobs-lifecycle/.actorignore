@@ -1,0 +1,5 @@
+# `apify push` excludes anything git ignores, and .gitignore deliberately keeps the
+# build artefacts written by scripts/sync_actor_files.py out of the repo (SPEC v2 §9.2).
+# The Dockerfile COPYs both, so force them back into the upload.
+!core/**
+!requirements.txt

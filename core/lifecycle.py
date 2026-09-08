@@ -34,11 +34,9 @@ and no id at all. Both are reported as unsupported rather than guessed at.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
-
-from core.history import bucket_of, state_key
 
 #: Providers whose public posting URL carries the board API's own job key.
 SUPPORTED = ("lever", "ashby", "rippling")
@@ -132,28 +130,39 @@ def _days_between(earlier: str | None, later: date) -> int | None:
         return None
 
 
+#: Where the published index lives. An Apify Actor runs under *the caller's* account and
+#: cannot read our key-value store — that closed this path once. A public file has no
+#: permission model to get wrong.
+INDEX_URL = "https://moonie0201.github.io/hiring-closures/age-index.json.gz"
+
+
+def load_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """`{"provider:company": {"t": tracked_since, "j": {job_id: (posted, first_seen)}}}`.
+
+    The file nests jobs under boards so the slug is not repeated 138,813 times; this flips
+    it into the lookup the enricher actually makes.
+    """
+    boards: dict[str, dict[str, Any]] = {}
+    for board in payload.get("boards") or []:
+        jobs = {row[0]: (row[1], row[2]) for row in board.get("j") or [] if row}
+        boards[f"{board.get('p')}:{board.get('c')}"] = {"t": board.get("t"), "j": jobs}
+    return boards
+
+
 @dataclass(slots=True)
 class Enricher:
-    """Resolves rows against `state.{bucket}`, one bucket read per bucket touched.
+    """Answers from the published age index, held in memory for the run.
 
-    A live posting needs nothing but its bucket: `state` already carries `first_seen`,
-    `last_seen` and the board's own `posted`. Buckets are cached for the run because a
-    dataset of a few thousand rows lands in far fewer than 64 of them.
+    A live posting needs only its board's entry: the index carries the board's own posted
+    date and our first sighting per job. 3.3 MB gzipped for 138,813 jobs, measured
+    2026-09-08, so one fetch covers a whole run however many rows it has.
     """
 
-    store: Any
+    boards: dict[str, dict[str, Any]]
     today: date
-    _buckets: dict[int, dict[str, Any]] = field(default_factory=dict)
+    generated: str | None = None
 
-    async def _bucket(self, index: int) -> dict[str, Any]:
-        cached = self._buckets.get(index)
-        if cached is None:
-            record = await self.store.get(state_key(index), {}) or {}
-            cached = record.get("companies") or {}
-            self._buckets[index] = cached
-        return cached
-
-    async def enrich(self, url: str | None) -> dict[str, Any]:
+    def enrich(self, url: str | None) -> dict[str, Any]:
         """Lifecycle facts for one posting URL. Never raises; unknowns are stated."""
         base: dict[str, Any] = {
             "sourceUrl": url,
@@ -166,12 +175,9 @@ class Enricher:
             "firstSeen": None,
             "firstSeenCensored": None,
             "postedAt": None,
-            "postedAtSource": None,
             "ageDays": None,
             "ageBasis": None,
-            "lastSeen": None,
             "stillListed": None,
-            "boardStatus": None,
         }
         if url is None:
             return base
@@ -185,18 +191,17 @@ class Enricher:
             return base
 
         base["provider"], base["company"], base["jobId"] = ref.provider, ref.company, ref.job_id
-        companies = await self._bucket(bucket_of(ref.provider, ref.company))
-        entry = companies.get(f"{ref.provider}:{ref.company}")
+        entry = self.boards.get(f"{ref.provider}:{ref.company}")
         if entry is None:
             base["coverage"] = COVERAGE_BOARD_UNTRACKED
             return base
 
-        tracked_since = entry.get("tracked_since")
+        tracked_since = entry.get("t")
         base["historyTrackedSince"] = tracked_since
         base["historyWindowDays"] = _days_between(tracked_since, self.today)
-        base["boardStatus"] = entry.get("status")
 
-        job = (entry.get("jobs") or {}).get(ref.job_id)
+        found = (entry.get("j") or {}).get(ref.job_id)
+        job = {"posted": found[0], "first_seen": found[1]} if found else None
         if job is None:
             # The board is watched and this id is not on it today. That is not the same as
             # "removed": we may have started watching after it closed, or the upstream row
@@ -209,9 +214,7 @@ class Enricher:
         posted = job.get("posted")
         base["coverage"] = COVERAGE_TRACKED
         base["firstSeen"] = first_seen
-        base["lastSeen"] = job.get("last_seen")
         base["postedAt"] = posted
-        base["postedAtSource"] = job.get("posted_src")
         base["stillListed"] = True
 
         # Censored when our first sighting is the day we started watching that board: the

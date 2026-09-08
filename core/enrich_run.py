@@ -13,17 +13,20 @@ are all pushed — they are the answer — and none of them are charged.
 
 from __future__ import annotations
 
+import asyncio
+import gzip
+import json
 import logging
+import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
 from apify import Actor
 
-from core.lifecycle import Enricher, first_url, is_chargeable
+from core.lifecycle import INDEX_URL, Enricher, first_url, is_chargeable, load_index
 
 logger = logging.getLogger("apify")
 
-STORE_NAME = "ats-history"
 LIFECYCLE_EVENT = "lifecycle"
 
 #: Column names upstream Actors use for the posting URL, in the order we try them. The
@@ -38,6 +41,15 @@ PAGE = 500
 #: A run that would enrich more than this stops and says so. An integration fires on
 #: somebody else's schedule, so the ceiling has to be ours.
 DEFAULT_MAX_ROWS = 5_000
+
+
+def _fetch_index() -> dict[str, Any]:
+    """The published index, or a hard failure. A stale answer is worse than none."""
+    request = urllib.request.Request(INDEX_URL, headers={"User-Agent": "ats-jobs-lifecycle"})
+    blob = urllib.request.urlopen(request, timeout=120).read()
+    if blob[:2] == b"\x1f\x8b":
+        blob = gzip.decompress(blob)
+    return json.loads(blob)
 
 
 def _config(raw: dict[str, Any]) -> dict[str, Any]:
@@ -82,15 +94,21 @@ async def main() -> None:
             )
             return
 
-        store = await Actor.open_key_value_store(name=STORE_NAME)
-
-        class _Reader:
-            async def get(self, key: str, default: Any = None) -> Any:
-                from core.history import decode
-
-                return decode(await store.get_value(key), default)
-
-        enricher = Enricher(store=_Reader(), today=datetime.now(UTC).date())
+        # Fetched over plain HTTP, not read from our key-value store. An Actor runs under
+        # the caller's account and cannot reach our storage — that is what broke the first
+        # version of this, deployed 2026-09-07. A public file has no permission model.
+        payload = await asyncio.to_thread(_fetch_index)
+        enricher = Enricher(
+            boards=load_index(payload),
+            today=datetime.now(UTC).date(),
+            generated=payload.get("generated"),
+        )
+        logger.info(
+            "age index %s: %s boards, %s jobs",
+            payload.get("generated"),
+            (payload.get("counts") or {}).get("boards"),
+            (payload.get("counts") or {}).get("jobs"),
+        )
         dataset = await Actor.open_dataset(id=cfg["datasetId"])
 
         seen: set[str] = set()
@@ -107,7 +125,7 @@ async def main() -> None:
 
             for item in items:
                 read += 1
-                row = await enricher.enrich(first_url(item, cfg["urlFields"]))
+                row = enricher.enrich(first_url(item, cfg["urlFields"]))
                 by_coverage[row["coverage"]] = by_coverage.get(row["coverage"], 0) + 1
 
                 # A dataset may list the same posting under several rows. The later ones
@@ -130,11 +148,10 @@ async def main() -> None:
                 pushed += 1
 
         logger.info(
-            "lifecycle read=%d pushed=%d charged=%d buckets=%d coverage=%s",
+            "lifecycle read=%d pushed=%d charged=%d coverage=%s",
             read,
             pushed,
             charged,
-            len(enricher._buckets),
             by_coverage,
         )
         await Actor.set_status_message(
