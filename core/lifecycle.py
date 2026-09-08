@@ -44,11 +44,19 @@ SUPPORTED = ("lever", "ashby", "rippling")
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 
 #: One pattern per supported provider. Anchored on the provider's own host so a link
-#: shortener or an employer redirect cannot be read as a board URL.
+#: shortener or an employer redirect cannot be read as a board URL, and closed after the
+#: UUID so `.../{uuid}garbage` is not read as `.../{uuid}` — that resolved to a real
+#: posting and would have attached its history to a URL that is not it.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("lever", re.compile(rf"^https?://jobs(?:\.eu)?\.lever\.co/([^/?#]+)/({_UUID})", re.I)),
-    ("ashby", re.compile(rf"^https?://jobs\.ashbyhq\.com/([^/?#]+)/({_UUID})", re.I)),
-    ("rippling", re.compile(rf"^https?://ats\.rippling\.com/([^/?#]+)/jobs/({_UUID})", re.I)),
+    (
+        "lever",
+        re.compile(rf"^https?://jobs(?:\.eu)?\.lever\.co/([^/?#]+)/({_UUID})(?=$|[/?#])", re.I),
+    ),
+    ("ashby", re.compile(rf"^https?://jobs\.ashbyhq\.com/([^/?#]+)/({_UUID})(?=$|[/?#])", re.I)),
+    (
+        "rippling",
+        re.compile(rf"^https?://ats\.rippling\.com/([^/?#]+)/jobs/({_UUID})(?=$|[/?#])", re.I),
+    ),
 )
 
 #: Providers we watch but cannot identify a single posting for from its URL alone.
@@ -66,6 +74,9 @@ COVERAGE_BOARD_UNTRACKED = "board_untracked"  # we have never watched this board
 COVERAGE_JOB_UNKNOWN = "job_unknown"  # board watched, this id is not in today's state
 COVERAGE_UNSUPPORTED = "unsupported_provider"  # provider we cannot identify from a URL
 COVERAGE_UNRESOLVED = "unresolved_url"  # not a job URL we recognise at all
+
+#: Age bases that are an age rather than a bound on one. See `is_chargeable`.
+CHARGEABLE_BASES = frozenset({"board", "observed"})
 
 
 @dataclass(slots=True)
@@ -110,24 +121,39 @@ def first_url(row: dict[str, Any], fields: tuple[str, ...]) -> str | None:
     Upstream Actors name this column differently — `url`, `jobUrl`, `applyUrl`,
     `absolute_url`, `hostedUrl`. Taking the configured field first keeps the caller in
     control; the sweep is what stops a working integration breaking on a rename.
+
+    A field that resolves wins over one that merely has text in it. Datasets carry a
+    `url` holding the company's careers page alongside a `jobUrl` holding the posting;
+    returning the first *non-empty* field made every such row `unresolved_url` while the
+    answer sat in the next column.
     """
-    for name in fields:
-        value = row.get(name)
-        if isinstance(value, str) and value.strip():
+    named = [row.get(n) for n in fields]
+    for value in named:
+        if isinstance(value, str) and parse_posting_url(value):
             return value.strip()
     for value in row.values():
         if isinstance(value, str) and parse_posting_url(value):
+            return value.strip()
+    for value in named:  # nothing resolves; hand back what the caller pointed at anyway,
+        if isinstance(value, str) and value.strip():  # so the row reports *its* URL
             return value.strip()
     return None
 
 
 def _days_between(earlier: str | None, later: date) -> int | None:
+    """Days from `earlier` to `later`, or None if that is not a fact.
+
+    A date in the future is not an age. A board that publishes one — a scheduled posting,
+    a timezone slip, a typo in a feed — would otherwise produce `ageDays: -2` presented
+    with the same confidence as a real number.
+    """
     if not isinstance(earlier, str) or len(earlier) < 10:
         return None
     try:
-        return (later - date.fromisoformat(earlier[:10])).days
+        days = (later - date.fromisoformat(earlier[:10])).days
     except ValueError:
         return None
+    return days if days >= 0 else None
 
 
 #: Where the published index lives. An Apify Actor runs under *the caller's* account and
@@ -136,16 +162,41 @@ def _days_between(earlier: str | None, later: date) -> int | None:
 INDEX_URL = "https://moonie0201.github.io/hiring-closures/age-index.json.gz"
 
 
+#: Index layouts this reader understands. The publisher and this function agree on a
+#: positional row by convention, and convention is exactly what drifts: swapping `posted`
+#: and `first_seen` in the writer produces a plausible age here and nothing complains.
+SUPPORTED_SCHEMAS = (1,)
+
+
+class IndexError_(ValueError):
+    """The published index is not one this build can read. Refusing is the whole point."""
+
+
 def load_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """`{"provider:company": {"t": tracked_since, "j": {job_id: (posted, first_seen)}}}`.
 
     The file nests jobs under boards so the slug is not repeated 138,813 times; this flips
     it into the lookup the enricher actually makes.
+
+    Raises on a schema it does not know and on a duplicated board, because both fail
+    silently otherwise — a version bump would swap two date columns and still return
+    confident ages, and a duplicate key would drop one board's jobs without a word.
     """
+    version = payload.get("schema")
+    if version not in SUPPORTED_SCHEMAS:
+        raise IndexError_(f"index schema {version!r}; this build reads {SUPPORTED_SCHEMAS}")
+
     boards: dict[str, dict[str, Any]] = {}
     for board in payload.get("boards") or []:
-        jobs = {row[0]: (row[1], row[2]) for row in board.get("j") or [] if row}
-        boards[f"{board.get('p')}:{board.get('c')}"] = {"t": board.get("t"), "j": jobs}
+        key = f"{board.get('p')}:{board.get('c')}"
+        if key in boards:
+            raise IndexError_(f"duplicate board {key!r} in the index")
+        jobs = {}
+        for row in board.get("j") or []:
+            if not isinstance(row, list) or len(row) != 3:
+                raise IndexError_(f"board {key!r} has a row of {len(row) if row else 0} fields")
+            jobs[row[0]] = (row[1], row[2])
+        boards[key] = {"t": board.get("t"), "j": jobs}
     return boards
 
 
@@ -239,5 +290,16 @@ def is_chargeable(row: dict[str, Any]) -> bool:
     Resolution failures, unsupported providers, untracked boards and unknown ids are all
     real answers and all free — charging for "we do not know" is how a data product loses
     the trust it sells.
+
+    `observed_floor` is free for the same reason. It says the posting is *at least* this
+    old because it was already up on the day we started watching the board; on a board we
+    began watching yesterday that reads as "1 day" and is worth nothing. Measured against
+    the 2026-09-08 index, no row takes this branch — all 138,813 carry the board's own
+    posted date — so this costs nothing today and is here for the provider that stops
+    publishing one.
     """
-    return row.get("coverage") == COVERAGE_TRACKED and row.get("ageDays") is not None
+    return (
+        row.get("coverage") == COVERAGE_TRACKED
+        and row.get("ageDays") is not None
+        and row.get("ageBasis") in CHARGEABLE_BASES
+    )

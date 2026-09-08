@@ -41,6 +41,14 @@ DEFAULT_URL_FIELDS = ("jobUrl", "url", "applyUrl", "absolute_url", "hostedUrl", 
 #: at once, large enough that a few thousand rows is a handful of round trips.
 PAGE = 500
 
+#: Tries per dataset page before a run gives up. A page that will not load must not look
+#: like the end of the dataset.
+REST_RETRIES = 3
+
+#: How stale the published index may be before `stillListed` stops being a current fact.
+#: The publisher runs daily; two days means it has missed twice.
+MAX_INDEX_AGE_DAYS = 2
+
 #: A run that would enrich more than this stops and says so. An integration fires on
 #: somebody else's schedule, so the ceiling has to be ours.
 DEFAULT_MAX_ROWS = 5_000
@@ -53,6 +61,17 @@ def _fetch_index() -> dict[str, Any]:
     if blob[:2] == b"\x1f\x8b":
         blob = gzip.decompress(blob)
     return json.loads(blob)
+
+
+def _index_age_days(generated: str | None) -> int | None:
+    """Days since the index was built, or None if it does not say."""
+    if not isinstance(generated, str):
+        return None
+    try:
+        built = datetime.strptime(generated[:10], "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    return (datetime.now(UTC).date() - built.date()).days
 
 
 async def _make_reader(dataset_id: str):
@@ -79,7 +98,20 @@ async def _make_reader(dataset_id: str):
         logger.info("reading upstream dataset over public REST")
 
         async def read_rest(offset: int, limit: int) -> list[dict[str, Any]]:
-            return await asyncio.to_thread(_rest, offset, limit) or []
+            # A failed page and an exhausted dataset both used to arrive here as `[]`, and
+            # the caller stops on `[]`. A blip in the middle of a 40,000-row dataset would
+            # have ended the run early, reported success, and charged for the prefix. One
+            # retry, then say so.
+            for attempt in range(REST_RETRIES):
+                rows = await asyncio.to_thread(_rest, offset, limit)
+                if rows is not None:
+                    return rows
+                logger.warning("dataset page at offset %d failed (try %d)", offset, attempt + 1)
+                await asyncio.sleep(2**attempt)
+            raise RuntimeError(
+                f"upstream dataset page at offset {offset} could not be read after "
+                f"{REST_RETRIES} tries; refusing to report a truncated read as complete"
+            )
 
         return read_rest
 
@@ -138,6 +170,22 @@ async def main() -> None:
         # the caller's account and cannot reach our storage — that is what broke the first
         # version of this, deployed 2026-09-07. A public file has no permission model.
         payload = await asyncio.to_thread(_fetch_index)
+
+        # `stillListed: true` is a claim about *today*. It is only as current as the file
+        # it came from, and nothing downstream can tell a fresh index from a month-old one.
+        # If our publisher has stopped, fail rather than sell yesterday as now.
+        generated = payload.get("generated")
+        age = _index_age_days(generated)
+        if age is None or age > MAX_INDEX_AGE_DAYS:
+            await Actor.fail(
+                status_message=(
+                    f"The age index is {generated!r} ({age} days old); this Actor will not "
+                    f"report listings as current from an index older than "
+                    f"{MAX_INDEX_AGE_DAYS} days."
+                )
+            )
+            return
+
         enricher = Enricher(
             boards=load_index(payload),
             today=datetime.now(UTC).date(),
@@ -171,6 +219,7 @@ async def main() -> None:
             for item in items:
                 read += 1
                 row = enricher.enrich(first_url(item, cfg["urlFields"]))
+                row["indexGeneratedAt"] = generated
                 by_coverage[row["coverage"]] = by_coverage.get(row["coverage"], 0) + 1
 
                 # A dataset may list the same posting under several rows. The later ones

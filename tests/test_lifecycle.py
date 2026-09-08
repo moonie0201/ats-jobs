@@ -23,6 +23,7 @@ from core.lifecycle import (  # noqa: E402
     COVERAGE_UNRESOLVED,
     COVERAGE_UNSUPPORTED,
     Enricher,
+    IndexError_,
     first_url,
     is_chargeable,
     load_index,
@@ -37,6 +38,7 @@ def boards_with(provider: str, company: str, *, tracked_since: str, jobs: dict) 
     """One board in the published index shape: rows are [job_id, posted, first_seen]."""
     return load_index(
         {
+            "schema": 1,
             "boards": [
                 {
                     "p": provider,
@@ -46,7 +48,7 @@ def boards_with(provider: str, company: str, *, tracked_since: str, jobs: dict) 
                         [jid, job.get("posted"), job.get("first_seen")] for jid, job in jobs.items()
                     ],
                 }
-            ]
+            ],
         }
     )
 
@@ -212,6 +214,7 @@ def test_the_index_round_trips_the_published_shape():
     board_untracked — the failure would look like 'we watch nothing'."""
     boards = load_index(
         {
+            "schema": 1,
             "boards": [
                 {
                     "p": "ashby",
@@ -219,7 +222,7 @@ def test_the_index_round_trips_the_published_shape():
                     "t": "2026-09-04",
                     "j": [[UUID, "2026-04-07", "2026-09-04"]],
                 }
-            ]
+            ],
         }
     )
     row = Enricher(boards=boards, today=TODAY).enrich(f"https://jobs.ashbyhq.com/ramp/{UUID}")
@@ -231,7 +234,7 @@ def test_the_index_round_trips_the_published_shape():
 
 
 def test_only_a_delivered_lifecycle_fact_is_chargeable():
-    assert is_chargeable({"coverage": COVERAGE_TRACKED, "ageDays": 154})
+    assert is_chargeable({"coverage": COVERAGE_TRACKED, "ageDays": 154, "ageBasis": "board"})
     for row in (
         {"coverage": COVERAGE_TRACKED, "ageDays": None},
         {"coverage": COVERAGE_JOB_UNKNOWN, "ageDays": None},
@@ -251,3 +254,83 @@ def test_the_configured_field_wins_and_a_rename_does_not_break_the_run():
     # Upstream renamed the column: fall back to any value that parses as a posting URL.
     assert first_url({"link": f"https://jobs.ashbyhq.com/ramp/{UUID}"}, ("jobUrl",)).endswith(UUID)
     assert first_url({"title": "Engineer"}, ("jobUrl",)) is None
+
+
+# --- Defects a Codex review found on 2026-09-09, each reproduced before it was fixed. ---
+
+
+def test_a_uuid_with_a_suffix_is_not_that_uuid():
+    """`.../{uuid}garbage` resolved to `{uuid}` and inherited a real posting's history."""
+    for suffix in ("garbage", "-", "0"):
+        assert parse_posting_url(f"https://jobs.lever.co/acme/{UUID}{suffix}") is None
+    for terminator in ("", "/", "/apply", "?src=x", "#top"):
+        ref = parse_posting_url(f"https://jobs.lever.co/acme/{UUID}{terminator}")
+        assert ref is not None and ref.job_id == UUID
+
+
+def test_a_floor_on_the_age_is_not_billed_as_the_age():
+    """`observed_floor` says "at least N days" — on a board watched since yesterday, N=1."""
+    boards = boards_with(
+        "lever",
+        "acme",
+        tracked_since="2026-09-07",
+        jobs={UUID: {"posted": None, "first_seen": "2026-09-07"}},
+    )
+    row = Enricher(boards=boards, today=TODAY).enrich(f"https://jobs.lever.co/acme/{UUID}")
+    assert row["ageBasis"] == "observed_floor"
+    assert row["ageDays"] == 1
+    assert row["firstSeenCensored"] is True
+    assert not is_chargeable(row)
+
+
+def test_a_date_in_the_future_is_not_an_age():
+    """A scheduled posting or a feed typo produced `ageDays: -2`, charged like any other."""
+    boards = boards_with(
+        "lever",
+        "acme",
+        tracked_since="2026-08-26",
+        jobs={UUID: {"posted": "2026-09-10", "first_seen": "2026-08-26"}},
+    )
+    row = Enricher(boards=boards, today=TODAY).enrich(f"https://jobs.lever.co/acme/{UUID}")
+    assert row["ageDays"] is None
+    assert not is_chargeable(row)
+
+
+def test_an_index_this_build_cannot_read_is_refused():
+    """A schema bump that swaps two date columns must not return confident ages."""
+    with pytest.raises(IndexError_):
+        load_index({"schema": 2, "boards": []})
+    with pytest.raises(IndexError_):
+        load_index({"boards": []})
+    with pytest.raises(IndexError_):  # a row that is not [id, posted, first_seen]
+        load_index({"schema": 1, "boards": [{"p": "lever", "c": "acme", "j": [[UUID]]}]})
+
+
+def test_a_duplicated_board_is_refused_rather_than_half_dropped():
+    """Two entries for one board silently kept the last; the other board's jobs vanished."""
+    with pytest.raises(IndexError_):
+        load_index(
+            {
+                "schema": 1,
+                "boards": [
+                    {
+                        "p": "lever",
+                        "c": "acme",
+                        "t": "2026-01-01",
+                        "j": [[UUID, "2026-01-01", "x"]],
+                    },
+                    {"p": "lever", "c": "acme", "t": "2026-09-07", "j": [["b", "2026-09-07", "y"]]},
+                ],
+            }
+        )
+
+
+def test_the_field_that_resolves_beats_the_field_that_is_merely_present():
+    """`url` holding a careers page suppressed `jobUrl` holding the posting."""
+    row = {
+        "url": "https://acme.com/careers",
+        "jobUrl": f"https://jobs.lever.co/acme/{UUID}",
+    }
+    assert first_url(row, ("url", "jobUrl")) == row["jobUrl"]
+    # Nothing resolves: still report what the caller pointed at, so the row names its URL.
+    assert first_url({"url": "https://acme.com/careers"}, ("url",)) == "https://acme.com/careers"
