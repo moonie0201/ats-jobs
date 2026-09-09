@@ -8,6 +8,12 @@ No HTML scraping, no login, no headless browser, no proxies — every request go
 endpoint the vendor publishes for exactly this purpose. Where a value cannot be
 determined the field is `null`; nothing is guessed.
 
+The daily record of when those postings stop being served lives at
+[hiring-closures](https://moonie0201.github.io/hiring-closures/): free company-day counts
+under CC0, and one posting-level
+[observation export](https://moonie0201.github.io/hiring-closures/export.html) with its
+coverage table shown before the price.
+
 ## Layout
 
 | Path | What lives there |
