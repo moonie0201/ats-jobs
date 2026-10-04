@@ -24,7 +24,6 @@ import argparse
 import collections
 import csv
 import gzip
-import io
 import json
 import os
 import sys
@@ -163,10 +162,12 @@ def main() -> int:
         picks += [r for r in rows if r["ev"] == "added"][:2]
         w.writerows(picks)
 
-    print(f"bundle: {len(rows):,} rows, {len(boards):,} boards, cutoff {cutoff}, "
-          f"{dropped:,} personio rows dropped -> {args.out}")
+    print(
+        f"bundle: {len(rows):,} rows, {len(boards):,} boards, cutoff {cutoff}, "
+        f"{dropped:,} personio rows dropped -> {args.out}"
+    )
     for p in sorted(args.out.iterdir()):
-        print(f"  {p.name:<36} {p.stat().st_size/1024/1024:6.2f} MB")
+        print(f"  {p.name:<36} {p.stat().st_size / 1024 / 1024:6.2f} MB")
     return 0
 
 

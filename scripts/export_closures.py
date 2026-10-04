@@ -53,7 +53,10 @@ import csv
 import io
 import json
 import os
+import shutil
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -137,8 +140,17 @@ def api_token() -> str:
 def get(path: str, token: str) -> bytes:
     req = urllib.request.Request(f"{API}{path}")
     req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=90) as response:
-        return response.read()
+    # At most three GET attempts. Only retry transient gateway/service responses.
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=90) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (502, 503, 504) or attempt == 2:
+                raise
+            exc.close()
+            time.sleep(attempt + 1)
+    raise AssertionError("unreachable")
 
 
 def list_keys(store: str, token: str) -> list[str]:
@@ -313,11 +325,77 @@ def write(path: Path, blob: bytes) -> Path:
     return path
 
 
+def replace_pair(paths: tuple[Path, Path], blobs: tuple[bytes, bytes]) -> None:
+    """Stage and verify a generation, then replace with rollback on ordinary errors.
+
+    This is not a crash-atomic two-file transaction. Keep recovery copies if rollback
+    itself fails; callers must surface the failure rather than publish the result.
+    """
+    paths[0].parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".closures-pair-", dir=paths[0].parent))
+    keep_recovery = False
+    existed = [path.exists() for path in paths]
+    replaced: list[int] = []
+    try:
+        # Both new files and all old bytes must be secured before either destination changes.
+        for index, (path, blob) in enumerate(zip(paths, blobs, strict=True)):
+            staged = stage / f"new-{index}"
+            staged.write_bytes(blob)
+            if staged.read_bytes() != blob:
+                raise OSError("staged sample verification failed")
+            if existed[index]:
+                original = path.read_bytes()
+                backup = stage / f"old-{index}"
+                backup.write_bytes(original)
+                if backup.read_bytes() != original:
+                    raise OSError("sample backup verification failed")
+        try:
+            for index, path in enumerate(paths):
+                os.replace(stage / f"new-{index}", path)
+                replaced.append(index)
+        except OSError as commit_error:
+            failures = []
+            for index in reversed(replaced):
+                try:
+                    if existed[index]:
+                        os.replace(stage / f"old-{index}", paths[index])
+                    else:
+                        paths[index].unlink()
+                except OSError as rollback_error:
+                    failures.append(rollback_error)
+            if failures:
+                keep_recovery = True
+                raise RuntimeError(
+                    f"sample rollback failed; do not publish; recovery files retained at {stage}"
+                ) from commit_error
+            raise
+    finally:
+        if not keep_recovery:
+            shutil.rmtree(stage, ignore_errors=True)
+
+
 def write_pair(
-    stem: Path, rows: list[dict[str, Any]], fields: tuple[str, ...], *, gz: bool
+    stem: Path,
+    rows: list[dict[str, Any]],
+    fields: tuple[str, ...],
+    *,
+    gz: bool,
+    preserve_pair: bool = False,
 ) -> None:
     csv_blob, jsonl_blob = to_csv(rows, fields), to_jsonl(rows, fields)
     suffix = ".gz" if gz else ""
+    if preserve_pair:
+        replace_pair(
+            (
+                stem.with_name(stem.name + ".csv" + suffix),
+                stem.with_name(stem.name + ".jsonl" + suffix),
+            ),
+            (
+                gzip_bytes(csv_blob) if gz else csv_blob,
+                gzip_bytes(jsonl_blob) if gz else jsonl_blob,
+            ),
+        )
+        return
     write(stem.with_name(stem.name + ".csv" + suffix), gzip_bytes(csv_blob) if gz else csv_blob)
     write(
         stem.with_name(stem.name + ".jsonl" + suffix),
@@ -337,7 +415,9 @@ def export(
     """Write one tier. Returns what went out, for the run summary."""
     if sample:
         free = recent_days(publishable(rows, blocked))
-        write_pair(out / "sample" / "closures-72h", free, FREE_FIELDS, gz=False)
+        if not free:
+            raise ValueError("empty publishable sample; existing files preserved")
+        write_pair(out / "sample" / "closures-72h", free, FREE_FIELDS, gz=False, preserve_pair=True)
         return {"rows": len(free), "days": len({r["d"] for r in free}), "events": 0}
 
     paid = unblocked(rows, blocked)
@@ -399,7 +479,17 @@ def main(argv: list[str] | None = None) -> int:
             else read_jsonl(args.store, token, day_keys(keys, "counts", None, None))
         )
     except urllib.error.HTTPError as exc:
-        sys.exit(f"Apify API {exc.code}: {exc.reason} — check APIFY_TOKEN and --store")
+        if 500 <= exc.code <= 599:
+            hint = "upstream server error; export aborted"
+        elif exc.code in (401, 403):
+            hint = "check credential access and resource permissions"
+        elif exc.code == 404:
+            hint = "requested store or record was not found"
+        elif exc.code == 429:
+            hint = "request limit response; export aborted"
+        else:
+            hint = "request failed; export aborted"
+        sys.exit(f"Apify API {exc.code}: {exc.reason} — {hint}")
 
     rows, suppressed = summarise(counts, events, first_days(all_counts))
     # `export(sample=True)` never reads `events`, and projecting + sorting a copy of every
