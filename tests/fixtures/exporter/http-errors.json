@@ -1,0 +1,50 @@
+{
+ "source": "Synthetic HTTP responses; 502 status/reason matches saved run diagnostic. No private response body or token.",
+ "cases": [
+  {
+   "status": 502,
+   "reason": "Bad Gateway",
+   "hint": "upstream server error; export aborted"
+  },
+  {
+   "status": 501,
+   "reason": "Not Implemented",
+   "hint": "upstream server error; export aborted"
+  },
+  {
+   "status": 500,
+   "reason": "Internal Server Error",
+   "hint": "upstream server error; export aborted"
+  },
+  {
+   "status": 503,
+   "reason": "Service Unavailable",
+   "hint": "upstream server error; export aborted"
+  },
+  {
+   "status": 401,
+   "reason": "Unauthorized",
+   "hint": "check credential access and resource permissions"
+  },
+  {
+   "status": 403,
+   "reason": "Forbidden",
+   "hint": "check credential access and resource permissions"
+  },
+  {
+   "status": 404,
+   "reason": "Not Found",
+   "hint": "requested store or record was not found"
+  },
+  {
+   "status": 429,
+   "reason": "Too Many Requests",
+   "hint": "request limit response; export aborted"
+  },
+  {
+   "status": 400,
+   "reason": "Bad Request",
+   "hint": "request failed; export aborted"
+  }
+ ]
+}
